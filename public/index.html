@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dankbarkeitstagebuch</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">Audio zu Gedanken</p>
+          <h1>Dankbarkeitstagebuch</h1>
+        </div>
+        <p class="intro-text">
+          Lade eine Sprachaufnahme hoch. Die App transkribiert sie lokal ueber das Backend,
+          erstellt Stichpunkte und speichert den Eintrag in deiner Datei.
+        </p>
+      </section>
+
+      <section class="upload-panel" aria-labelledby="upload-title">
+        <h2 id="upload-title">Neuer Eintrag</h2>
+        <form id="upload-form">
+          <label class="file-picker">
+            <span>Audio-Datei auswaehlen</span>
+            <input id="audio" name="audio" type="file" accept="audio/*" required />
+          </label>
+          <div class="form-row">
+            <span id="file-name" class="file-name">Keine Datei ausgewaehlt</span>
+            <button id="submit-button" type="submit">Verarbeiten</button>
+          </div>
+        </form>
+        <div class="recording-controls">
+          <button id="record-button" class="secondary-button" type="button">Aufnahme starten</button>
+        </div>
+        <div id="recording-visualizer" class="recording-visualizer" hidden>
+          <span>Mikrofon aktiv</span>
+          <canvas id="visualizer-canvas" width="360" height="72" aria-hidden="true"></canvas>
+          <strong id="speech-status" class="speech-status">Warte auf Input</strong>
+        </div>
+        <div id="recording-preview" class="recording-preview" hidden>
+          <audio id="recording-audio" controls></audio>
+          <div class="preview-actions">
+            <button id="discard-recording-button" class="secondary-button" type="button">Verwerfen</button>
+            <button id="transcribe-recording-button" type="button">Transkribieren</button>
+          </div>
+        </div>
+        <div id="draft-editor" class="draft-editor" hidden>
+          <h3>Entwurf pruefen</h3>
+          <label for="draft-bullets">Stichpunkte</label>
+          <textarea id="draft-bullets" rows="6"></textarea>
+          <details id="draft-original-details" class="draft-original">
+            <summary>Originaltext anzeigen</summary>
+            <p id="draft-original-text"></p>
+          </details>
+          <div class="draft-actions">
+            <button id="discard-draft-button" class="secondary-button" type="button">Entwurf verwerfen</button>
+            <button id="save-draft-button" type="button">Speichern</button>
+          </div>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="entries-section" aria-labelledby="entries-title">
+        <div class="section-header">
+          <h2 id="entries-title">Bisherige Eintraege</h2>
+          <div class="export-actions">
+            <button id="json-export-button" class="secondary-button" type="button">Backup exportieren</button>
+            <button id="markdown-export-button" class="secondary-button" type="button">Als Markdown exportieren</button>
+            <button id="import-button" class="secondary-button" type="button">Backup importieren</button>
+            <button id="refresh-button" class="secondary-button" type="button">Aktualisieren</button>
+          </div>
+          <input id="import-input" type="file" accept="application/json,.json" hidden />
+        </div>
+        <div id="entries" class="entries"></div>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

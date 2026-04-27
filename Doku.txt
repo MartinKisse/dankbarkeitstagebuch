@@ -1,0 +1,9 @@
+Mit "npm start" starten
+
+Hier kann ich sehen wie viel ich schon an Tokes verbraucht habe:
+
+https://platform.openai.com/settings/organization/usage
+
+Hier ist das mit ngrok:
+
+https://dashboard.ngrok.com/get-started/your-authtoken

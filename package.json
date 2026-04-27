@@ -1,0 +1,23 @@
+{
+  "name": "dankbarkeitsapp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "dev": "concurrently -n server,ngrok -c green,cyan \"node server.js\" \".\\ngrok.exe http 3000\"",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "openai": "^6.34.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

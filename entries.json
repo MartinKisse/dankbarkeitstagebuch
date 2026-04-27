@@ -1,0 +1,61 @@
+[
+  {
+    "id": "04b14b08-1345-415c-9acf-8cfa07a191cd",
+    "date": "2026-04-27T19:51:24.475Z",
+    "originalText": "Oh wow, ich bin mega glücklich, ich hab das Dankbarkeitstagebuch jetzt erfolgreich auf meinem Handy am Laufen.",
+    "bullets": [
+      "Dankbarkeitstagebuch erfolgreich auf dem Handy eingerichtet."
+    ]
+  },
+  {
+    "id": "eb33e2e4-fe57-40b9-acfa-65ce3c7f26d9",
+    "date": "2026-04-27T19:09:03.550Z",
+    "originalText": "Ich war heute beim Aldi einkaufen und es war wirklich super. Also die Aldi hat einfach richtig geile Angebote. Das macht mich glücklich. Außerdem habe ich es geschafft, die Motivation zu finden, in die Apotheke zu gehen, mir da Ibuprofen zu kaufen und außerdem habe ich noch bei eBay Kleinanzeigen einen Elektrobaukasten verkauft. Ich bin froh, dass das so gut geklappt hat.",
+    "bullets": [
+      "Tolle Angebote beim Aldi entdeckt.",
+      "Motivation gefunden, um zur Apotheke zu gehen und Ibuprofen zu kaufen.",
+      "Elektrobaukasten erfolgreich bei eBay Kleinanzeigen verkauft."
+    ]
+  },
+  {
+    "id": "f775d673-d72f-44bb-a356-5356f4db4877",
+    "date": "2026-04-27T18:58:53.189Z",
+    "originalText": "Ich bin dankbar dafür, dass ich so unglaublich heiß bin, gut aussehe und ganz ganz viel Geld habe. Außerdem hat ein Kollege heute über einen Witz von mir gelacht. Ich bin froh, dass ich so ein toller Typ bin!",
+    "bullets": [
+      "Dankbarkeit für mein Aussehen und Wohlstand.",
+      "Freude über das Lachen eines Kollegen über meinen Witz.",
+      "Stolz auf meine positive Ausstrahlung."
+    ],
+    "updatedAt": "2026-04-27T19:10:52.103Z"
+  },
+  {
+    "id": "ff6519be-54b9-4190-9fc4-6bbc7bb595bc",
+    "date": "2026-04-27T18:43:08.265Z",
+    "originalText": "Ich bin heute sehr dankbar dafür, dass ich so eine tolle Familie habe, eine tolle Freundin, gesund bin und super Arbeitskollegen habe.",
+    "bullets": [
+      "Dankbarkeit für eine tolle Familie",
+      "Dankbarkeit für eine tolle Freundin",
+      "Dankbarkeit für die eigene Gesundheit",
+      "Dankbarkeit für super Arbeitskollegen"
+    ]
+  },
+  {
+    "id": "29d275e4-b3aa-4d54-9f60-32c03e4adec8",
+    "date": "2026-04-27T18:31:04.630Z",
+    "originalText": "Hallo, das hier ist der Test, mal schauen ob du das zu Text umwandeln kannst, dankeschön!\nIch bin richtig Dankbar für meine Klavierfähigkeiten!\nAußerdem habe ich heute meinen Handschuh im Treppenhaus wieder gefunden.",
+    "bullets": [
+      "Dankbarkeit für meine Klavierfähigkeiten",
+      "Wiederfinden meines Handschuhs im Treppenhaus"
+    ],
+    "updatedAt": "2026-04-27T18:38:47.677Z"
+  },
+  {
+    "id": "af6b6a9d-723d-421e-b70c-715c42d77817",
+    "date": "2026-04-27T18:24:52.748Z",
+    "originalText": "Hallo, das hier ist der Test, mal schauen ob du das zu Text umwandeln kannst, Dankeschön.",
+    "bullets": [
+      "Test wird durchgeführt",
+      "Dankeschön für die Möglichkeit"
+    ]
+  }
+]
