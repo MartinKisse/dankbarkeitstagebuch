@@ -7,3 +7,30 @@ https://platform.openai.com/settings/organization/usage
 Hier ist das mit ngrok:
 
 https://dashboard.ngrok.com/get-started/your-authtoken
+
+
+Ideen:
+
+Analyse:
+Wordcloud
+Statistik zu Themen?
+
+TBDs:
+
+Streak!
+Wie viele Tage in Folge hast du es geschafft?
+Eine Kalender übersicht, an welchen Tagen man eingetragen hast
+
+App schöner machen
+
+Export etc. verstecken 
+
+Impressum
+
+Studien zu Dankbarkeitstagebuch heraussuchen und irgendwie mit einbinden
+
+
+Ich muss ausstellen, dass die Aufnahme aufhört, wenn man mal 2 Sekunde nichts sagt
+Außerdem würde ich gerne das Design der Wellen beim Sprechen ändern.
+
+

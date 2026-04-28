@@ -18,6 +18,8 @@ const port = process.env.PORT || 3000;
 const host = "0.0.0.0";
 const entriesPath = path.join(__dirname, "entries.json");
 const uploadsDir = path.join(__dirname, "uploads");
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
 
 const upload = multer({
   dest: uploadsDir,
@@ -30,8 +32,20 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
+
+app.get("/api/config", (req, res) => {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return res.status(500).json({ error: "Supabase-Konfiguration fehlt." });
+  }
+
+  res.json({
+    supabaseUrl,
+    supabaseAnonKey,
+  });
+});
+
+app.use(express.static(path.join(__dirname, "public")));
 
 async function ensureStorage() {
   await fsp.mkdir(uploadsDir, { recursive: true });
