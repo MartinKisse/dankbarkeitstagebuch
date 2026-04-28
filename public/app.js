@@ -12,6 +12,9 @@ const recordingPreview = document.querySelector("#recording-preview");
 const recordingAudio = document.querySelector("#recording-audio");
 const discardRecordingButton = document.querySelector("#discard-recording-button");
 const transcribeRecordingButton = document.querySelector("#transcribe-recording-button");
+const entryDateInput = document.querySelector("#entry-date");
+const entryDateTodayButton = document.querySelector("#entry-date-today");
+const entryDateYesterdayButton = document.querySelector("#entry-date-yesterday");
 const draftEditor = document.querySelector("#draft-editor");
 const draftBullets = document.querySelector("#draft-bullets");
 const draftOriginalText = document.querySelector("#draft-original-text");
@@ -54,6 +57,12 @@ const dayFormatter = new Intl.DateTimeFormat("de-DE", {
   weekday: "long",
   day: "numeric",
   month: "long",
+});
+
+const entryDateFormatter = new Intl.DateTimeFormat("de-DE", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
 });
 
 async function loginWithGoogle() {
@@ -184,6 +193,45 @@ function getDayKey(date) {
   return `${year}-${month}-${day}`;
 }
 
+function getEntryDayKey(entry) {
+  if (typeof entry.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
+    return entry.date;
+  }
+
+  return getDayKey(new Date(entry.date));
+}
+
+function getDateInputValue(date) {
+  return getDayKey(date);
+}
+
+function getTodayInputValue() {
+  return getDateInputValue(new Date());
+}
+
+function syncEntryDateLimit() {
+  entryDateInput.max = getTodayInputValue();
+}
+
+function setEntryDateFromOffset(dayOffset) {
+  syncEntryDateLimit();
+  const date = new Date();
+  date.setDate(date.getDate() + dayOffset);
+  entryDateInput.value = getDateInputValue(date);
+}
+
+function isFutureEntryDate(value) {
+  return Boolean(value) && value > getTodayInputValue();
+}
+
+function getCreatedDayKey(entry) {
+  return entry.createdAt ? getDayKey(new Date(entry.createdAt)) : getEntryDayKey(entry);
+}
+
+function isBackfilledEntry(entry) {
+  return getEntryDayKey(entry) < getCreatedDayKey(entry);
+}
+
 function formatDayHeading(dayKey) {
   const [year, month, day] = dayKey.split("-").map(Number);
   const date = new Date(year, month - 1, day);
@@ -203,11 +251,18 @@ function formatDayHeading(dayKey) {
 }
 
 function groupEntriesByDay(entries) {
-  const sortedEntries = [...entries].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const sortedEntries = [...entries].sort((a, b) => {
+    const dateComparison = new Date(b.date) - new Date(a.date);
+    if (dateComparison) {
+      return dateComparison;
+    }
+
+    return new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date);
+  });
   const groups = new Map();
 
   for (const entry of sortedEntries) {
-    const dayKey = getDayKey(new Date(entry.date));
+    const dayKey = getEntryDayKey(entry);
     if (!groups.has(dayKey)) {
       groups.set(dayKey, []);
     }
@@ -225,9 +280,26 @@ function createEntryElement(entry) {
   const header = document.createElement("div");
   header.className = "entry-header";
 
+  const meta = document.createElement("div");
+  meta.className = "entry-meta";
+
   const time = document.createElement("time");
   time.dateTime = entry.date;
-  time.textContent = dateFormatter.format(new Date(entry.date));
+  time.textContent = entryDateFormatter.format(new Date(`${getEntryDayKey(entry)}T00:00:00`));
+
+  meta.append(time);
+
+  if (isBackfilledEntry(entry)) {
+    const backfilledLabel = document.createElement("span");
+    backfilledLabel.className = "entry-backfilled-label";
+    const createdDate = new Date(entry.createdAt || entry.date);
+    const createdLabel = new Intl.DateTimeFormat("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+    }).format(createdDate);
+    backfilledLabel.textContent = `Nachgetragen am ${createdLabel}`;
+    meta.append(backfilledLabel);
+  }
 
   const actions = document.createElement("div");
   actions.className = "entry-actions";
@@ -245,7 +317,7 @@ function createEntryElement(entry) {
   deleteButton.addEventListener("click", () => deleteEntry(entry.id));
 
   actions.append(editButton, deleteButton);
-  header.append(time, actions);
+  header.append(meta, actions);
 
   const list = document.createElement("ul");
   list.className = "entry-bullets";
@@ -311,7 +383,8 @@ function renderEntries(entries) {
 function mapJournalRowToEntry(row) {
   return {
     id: row.id,
-    date: row.created_at,
+    date: row.entry_date || row.created_at,
+    createdAt: row.created_at,
     bullets: String(row.content || "").split("\n").filter(Boolean),
     originalText: row.transcript || "",
   };
@@ -323,7 +396,7 @@ async function loadEntries() {
     return;
   }
 
-  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?select=*&order=created_at.desc`, {
+  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?select=*&order=entry_date.desc.nullslast,created_at.desc`, {
     headers: {
       "apikey": supabaseAnonKey,
       "Authorization": `Bearer ${currentSession.access_token}`,
@@ -873,6 +946,14 @@ discardDraftButton.addEventListener("click", () => {
   setStatus("Entwurf verworfen.");
 });
 
+entryDateTodayButton.addEventListener("click", () => {
+  setEntryDateFromOffset(0);
+});
+
+entryDateYesterdayButton.addEventListener("click", () => {
+  setEntryDateFromOffset(-1);
+});
+
 saveDraftButton.addEventListener("click", async () => {
   console.log("SAVE CLICKED");
 
@@ -883,6 +964,13 @@ saveDraftButton.addEventListener("click", async () => {
   const bullets = getEditedDraftBullets();
   if (!bullets.length) {
     setStatus("Bitte behalte mindestens einen Stichpunkt.", "error");
+    return;
+  }
+
+  syncEntryDateLimit();
+  const entryDate = entryDateInput.value || getTodayInputValue();
+  if (isFutureEntryDate(entryDate)) {
+    setStatus("Bitte wähle kein Datum in der Zukunft.", "error");
     return;
   }
 
@@ -901,6 +989,7 @@ saveDraftButton.addEventListener("click", async () => {
 
     const payload = {
       user_id: currentUser.id,
+      entry_date: entryDate,
       content: bullets.join("\n"),
       transcript: currentDraft.originalText || "",
     };
@@ -925,6 +1014,7 @@ saveDraftButton.addEventListener("click", async () => {
     }
 
     clearDraftEditor();
+    setEntryDateFromOffset(0);
     setStatus("Eintrag gespeichert.", "success");
     await loadEntries();
   } catch (error) {
@@ -981,6 +1071,8 @@ refreshButton.addEventListener("click", async () => {
 
 clearRecordingPreview();
 clearDraftEditor();
+syncEntryDateLimit();
+setEntryDateFromOffset(0);
 
 supabase.auth.onAuthStateChange(async (_event, session) => {
   currentSession = session;

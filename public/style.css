@@ -117,6 +117,44 @@ h2 {
   margin-bottom: 0;
 }
 
+.entry-date-control {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.entry-date-control label {
+  color: var(--accent-dark);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.entry-date-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.entry-date-row input {
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--text);
+  background: var(--surface-strong);
+}
+
+.entry-date-shortcuts {
+  display: flex;
+  gap: 8px;
+}
+
+.entry-date-shortcuts button {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
 .recording-controls {
   display: flex;
   justify-content: center;
@@ -360,11 +398,28 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .entry time {
   display: block;
   color: var(--accent-dark);
   font-size: 0.85rem;
   font-weight: 800;
+}
+
+.entry-backfilled-label {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  background: var(--surface-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .entry-original {
@@ -476,10 +531,16 @@ button:disabled {
   }
 
   .recording-controls,
+  .entry-date-row,
   .section-header {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .entry-date-shortcuts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   button {
