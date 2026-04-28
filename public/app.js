@@ -8,7 +8,6 @@ const recordButton = document.querySelector("#record-button");
 const recordingVisualizer = document.querySelector("#recording-visualizer");
 const visualizerCanvas = document.querySelector("#visualizer-canvas");
 const visualizerContext = visualizerCanvas.getContext("2d");
-const speechStatus = document.querySelector("#speech-status");
 const recordingPreview = document.querySelector("#recording-preview");
 const recordingAudio = document.querySelector("#recording-audio");
 const discardRecordingButton = document.querySelector("#discard-recording-button");
@@ -26,9 +25,12 @@ let recordingStream = null;
 let isRecording = false;
 let audioContext = null;
 let analyser = null;
+let mediaSourceNode = null;
 let visualizerFrameId = null;
 let smoothedVolume = 0;
 let silentSince = null;
+let waveformHistory = [];
+let lastWaveformSampleAt = 0;
 let recordedBlob = null;
 let recordedAudioUrl = null;
 let recordedAudioFile = null;
@@ -37,9 +39,12 @@ let savedDraftFingerprint = "";
 let currentSession = null;
 let currentUser = null;
 
-const speakingThreshold = 0.035;
-const smoothingFactor = 0.82;
-const silenceStopDelay = 2000;
+const SPEAKING_THRESHOLD = 0.035;
+const VOLUME_SMOOTHING_FACTOR = 0.9;
+const SILENCE_TIMEOUT_MS = 60_000;
+const WAVEFORM_HISTORY_SIZE = 160;
+const WAVEFORM_SAMPLE_INTERVAL_MS = 80;
+const WAVEFORM_MIN_LEVEL = 0.08;
 
 const dateFormatter = new Intl.DateTimeFormat("de-DE", {
   timeStyle: "short",
@@ -441,26 +446,87 @@ function clearRecordingPreview() {
   transcribeRecordingButton.disabled = true;
 }
 
+function waitForMediaEvent(element, eventName, timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    let timeoutId = null;
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      element.removeEventListener(eventName, handleEvent);
+    };
+
+    const handleEvent = () => {
+      cleanup();
+      resolve();
+    };
+
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, timeoutMs);
+
+    element.addEventListener(eventName, handleEvent, { once: true });
+  });
+}
+
+function hasUsableAudioDuration(audioElement) {
+  return Number.isFinite(audioElement.duration) && audioElement.duration > 0;
+}
+
+async function fixMediaRecorderDuration(audioElement) {
+  if (hasUsableAudioDuration(audioElement)) {
+    return;
+  }
+
+  try {
+    audioElement.currentTime = Number.MAX_SAFE_INTEGER;
+    await Promise.race([
+      waitForMediaEvent(audioElement, "timeupdate", 1200),
+      waitForMediaEvent(audioElement, "durationchange", 1200),
+    ]);
+  } catch {
+    // Some browsers reject seeking before metadata is stable. The player still works once playback starts.
+  } finally {
+    try {
+      audioElement.currentTime = 0;
+    } catch {
+      // Ignore browsers that still consider the MediaRecorder blob unseekable at this point.
+    }
+  }
+}
+
+async function prepareRecordingPreview(audioElement, audioUrl) {
+  audioElement.pause();
+  audioElement.preload = "metadata";
+  audioElement.src = audioUrl;
+  audioElement.load();
+
+  await waitForMediaEvent(audioElement, "loadedmetadata");
+  await fixMediaRecorderDuration(audioElement);
+
+  try {
+    audioElement.currentTime = 0;
+  } catch {
+    // Keep the preview available even if this browser delays duration calculation until playback.
+  }
+}
+
 function stopRecording() {
   if (!isRecording || !mediaRecorder) {
     return;
   }
 
+  silentSince = null;
   setStatus("Aufnahme wird beendet ...");
   recordButton.disabled = true;
   mediaRecorder.stop();
 }
 
 function getSpeechState(volume) {
-  return volume >= speakingThreshold ? "speaking" : "silent";
+  return volume >= SPEAKING_THRESHOLD ? "speaking" : "silent";
 }
 
-function drawVisualizer() {
-  if (!analyser) {
-    return;
-  }
-
-  const { width, height } = visualizerCanvas;
+function getCurrentVolumeLevel() {
   const data = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteTimeDomainData(data);
   let sumSquares = 0;
@@ -470,16 +536,56 @@ function drawVisualizer() {
     sumSquares += normalized * normalized;
   }
 
-  const rms = Math.sqrt(sumSquares / data.length);
-  smoothedVolume = smoothingFactor * smoothedVolume + (1 - smoothingFactor) * rms;
-  const speechState = getSpeechState(smoothedVolume);
-  const now = performance.now();
+  return Math.sqrt(sumSquares / data.length);
+}
 
-  speechStatus.textContent = speechState === "speaking" ? "Spricht..." : "Warte auf Input";
+function fillRoundedRect(context, x, y, width, height, radius) {
+  if (typeof context.roundRect === "function") {
+    context.beginPath();
+    context.roundRect(x, y, width, height, radius);
+    context.fill();
+    return;
+  }
+
+  context.fillRect(x, y, width, height);
+}
+
+function drawWaveformHistory() {
+  const { width, height } = visualizerCanvas;
+  const centerY = height / 2;
+  const step = width / WAVEFORM_HISTORY_SIZE;
+  const barWidth = Math.max(1, step * 0.58);
+
+  visualizerContext.clearRect(0, 0, width, height);
+  visualizerContext.fillStyle = "#2f7d6d";
+
+  waveformHistory.forEach((level, index) => {
+    const age = index / Math.max(1, WAVEFORM_HISTORY_SIZE - 1);
+    const opacity = 0.28 + age * 0.72;
+    const barHeight = Math.max(5, level * height * 0.86);
+    const x = index * step + (step - barWidth) / 2;
+    const y = centerY - barHeight / 2;
+
+    visualizerContext.globalAlpha = opacity;
+    fillRoundedRect(visualizerContext, x, y, barWidth, barHeight, barWidth / 2);
+  });
+
+  visualizerContext.globalAlpha = 1;
+}
+
+function drawVisualizer(timestamp = performance.now()) {
+  if (!analyser || !isRecording) {
+    return;
+  }
+
+  const rms = getCurrentVolumeLevel();
+  smoothedVolume = VOLUME_SMOOTHING_FACTOR * smoothedVolume + (1 - VOLUME_SMOOTHING_FACTOR) * rms;
+  const speechState = getSpeechState(smoothedVolume);
+  const visibleLevel = Math.max(WAVEFORM_MIN_LEVEL, Math.min(1, smoothedVolume * 5));
 
   if (speechState === "silent") {
-    silentSince ??= now;
-    if (now - silentSince >= silenceStopDelay) {
+    silentSince ??= timestamp;
+    if (isRecording && timestamp - silentSince >= SILENCE_TIMEOUT_MS) {
       stopRecording();
       return;
     }
@@ -487,28 +593,13 @@ function drawVisualizer() {
     silentSince = null;
   }
 
-  visualizerContext.clearRect(0, 0, width, height);
-
-  const barCount = 36;
-  const samplesPerBar = Math.floor(data.length / barCount);
-  const barWidth = width / barCount;
-
-  for (let i = 0; i < barCount; i += 1) {
-    let sum = 0;
-
-    for (let j = 0; j < samplesPerBar; j += 1) {
-      const sample = data[i * samplesPerBar + j] - 128;
-      sum += Math.abs(sample);
-    }
-
-    const volume = sum / samplesPerBar / 128;
-    const barHeight = Math.max(6, volume * height * 1.9);
-    const x = i * barWidth + 2;
-    const y = (height - barHeight) / 2;
-
-    visualizerContext.fillStyle = "#2f7d6d";
-    visualizerContext.fillRect(x, y, Math.max(3, barWidth - 4), barHeight);
+  if (timestamp - lastWaveformSampleAt >= WAVEFORM_SAMPLE_INTERVAL_MS) {
+    waveformHistory.push(visibleLevel);
+    waveformHistory = waveformHistory.slice(-WAVEFORM_HISTORY_SIZE);
+    lastWaveformSampleAt = timestamp;
   }
+
+  drawWaveformHistory();
 
   visualizerFrameId = requestAnimationFrame(drawVisualizer);
 }
@@ -519,18 +610,19 @@ function startVisualizer(stream) {
     return;
   }
 
+  stopVisualizer();
   audioContext = new AudioContextClass();
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 256;
   smoothedVolume = 0;
   silentSince = null;
+  lastWaveformSampleAt = 0;
+  waveformHistory = Array(WAVEFORM_HISTORY_SIZE).fill(WAVEFORM_MIN_LEVEL);
 
-  const source = audioContext.createMediaStreamSource(stream);
-  source.connect(analyser);
+  mediaSourceNode = audioContext.createMediaStreamSource(stream);
+  mediaSourceNode.connect(analyser);
 
   recordingVisualizer.hidden = false;
-  speechStatus.textContent = "Warte auf Input";
-  cancelAnimationFrame(visualizerFrameId);
   drawVisualizer();
 }
 
@@ -540,10 +632,17 @@ function stopVisualizer() {
     visualizerFrameId = null;
   }
 
+  if (mediaSourceNode) {
+    mediaSourceNode.disconnect();
+    mediaSourceNode = null;
+  }
+
   analyser = null;
   silentSince = null;
+  smoothedVolume = 0;
+  lastWaveformSampleAt = 0;
+  waveformHistory = [];
   recordingVisualizer.hidden = true;
-  speechStatus.textContent = "Warte auf Input";
   visualizerContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
 
   if (audioContext) {
@@ -736,7 +835,7 @@ recordButton.addEventListener("click", async () => {
       }
 
       recordedAudioUrl = URL.createObjectURL(recordedBlob);
-      recordingAudio.src = recordedAudioUrl;
+      await prepareRecordingPreview(recordingAudio, recordedAudioUrl);
       recordingPreview.hidden = false;
       discardRecordingButton.disabled = false;
       transcribeRecordingButton.disabled = false;
@@ -744,8 +843,8 @@ recordButton.addEventListener("click", async () => {
     });
 
     mediaRecorder.start();
-    startVisualizer(recordingStream);
     isRecording = true;
+    startVisualizer(recordingStream);
     recordButton.textContent = "Aufnahme stoppen";
     discardRecordingButton.disabled = true;
     transcribeRecordingButton.disabled = true;
