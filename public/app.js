@@ -241,7 +241,7 @@ function createEntryElement(entry) {
   const deleteButton = document.createElement("button");
   deleteButton.className = "danger-button";
   deleteButton.type = "button";
-  deleteButton.textContent = "Loeschen";
+  deleteButton.textContent = "Löschen";
   deleteButton.addEventListener("click", () => deleteEntry(entry.id));
 
   actions.append(editButton, deleteButton);
@@ -283,7 +283,7 @@ function renderEntries(entries) {
   if (!groupedEntries.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "Noch keine Eintraege vorhanden.";
+    empty.textContent = "Noch keine Einträge vorhanden.";
     entriesContainer.append(empty);
     return;
   }
@@ -334,7 +334,7 @@ async function loadEntries() {
   console.log("LOAD ENTRIES RESPONSE", response.status, responseText);
 
   if (!response.ok) {
-    throw new Error("Eintraege konnten nicht geladen werden.");
+    throw new Error("Einträge konnten nicht geladen werden.");
   }
 
   const data = responseText ? JSON.parse(responseText) : [];
@@ -404,7 +404,7 @@ function confirmDiscardDraft() {
     return true;
   }
 
-  return confirm("Es gibt einen ungespeicherten Entwurf. Moechtest du ihn verwerfen?");
+  return confirm("Es gibt einen ungespeicherten Entwurf. Möchtest du ihn verwerfen?");
 }
 
 function getRecordingMimeType() {
@@ -686,12 +686,12 @@ async function uploadAudioFile(audioFile) {
 }
 
 async function deleteEntry(id) {
-  if (!confirm("Diesen Eintrag wirklich loeschen?")) {
+  if (!confirm("Diesen Eintrag wirklich löschen?")) {
     return;
   }
 
   try {
-    setStatus("Eintrag wird geloescht ...");
+    setStatus("Eintrag wird gelöscht ...");
     const { error } = await supabase
       .from("journal_entries")
       .delete()
@@ -701,11 +701,11 @@ async function deleteEntry(id) {
       throw error;
     }
 
-    setStatus("Eintrag geloescht.", "success");
+    setStatus("Eintrag gelöscht.", "success");
     await loadEntries();
   } catch (error) {
     console.error(error);
-    setStatus(error.message || "Eintrag konnte nicht geloescht werden.", "error");
+    setStatus(error.message || "Eintrag konnte nicht gelöscht werden.", "error");
   }
 }
 
@@ -789,7 +789,7 @@ recordButton.addEventListener("click", async () => {
   }
 
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    setStatus("Dein Browser unterstuetzt Mikrofonaufnahmen leider nicht.", "error");
+    setStatus("Dein Browser unterstützt Mikrofonaufnahmen leider nicht.", "error");
     return;
   }
 
@@ -839,7 +839,7 @@ recordButton.addEventListener("click", async () => {
       recordingPreview.hidden = false;
       discardRecordingButton.disabled = false;
       transcribeRecordingButton.disabled = false;
-      setStatus("Aufnahme bereit. Du kannst sie anhoeren, verwerfen oder transkribieren.", "success");
+      setStatus("Aufnahme bereit. Du kannst sie anhören, verwerfen oder transkribieren.", "success");
     });
 
     mediaRecorder.start();
@@ -848,7 +848,7 @@ recordButton.addEventListener("click", async () => {
     recordButton.textContent = "Aufnahme stoppen";
     discardRecordingButton.disabled = true;
     transcribeRecordingButton.disabled = true;
-    setStatus("Aufnahme laeuft ...");
+    setStatus("Aufnahme läuft ...");
   } catch (error) {
     stopVisualizer();
     recordingStream?.getTracks().forEach((track) => track.stop());
@@ -971,7 +971,7 @@ transcribeRecordingButton.addEventListener("click", async () => {
 
 refreshButton.addEventListener("click", async () => {
   try {
-    setStatus("Eintraege werden aktualisiert ...");
+    setStatus("Einträge werden aktualisiert ...");
     await loadEntries();
     setStatus("");
   } catch (error) {
