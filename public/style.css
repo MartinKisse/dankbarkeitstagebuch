@@ -462,10 +462,10 @@ button:disabled {
   font-weight: 800;
 }
 
+.edit-date-input,
 .edit-textarea {
   display: block;
   width: 100%;
-  resize: vertical;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
@@ -474,6 +474,16 @@ button:disabled {
   line-height: 1.5;
 }
 
+.edit-date-input {
+  min-height: 48px;
+  margin-bottom: 14px;
+}
+
+.edit-textarea {
+  resize: vertical;
+}
+
+.edit-date-input:focus,
 .edit-textarea:focus {
   border-color: var(--accent);
   outline: 3px solid rgba(47, 125, 109, 0.14);

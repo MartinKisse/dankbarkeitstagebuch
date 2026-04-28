@@ -786,6 +786,16 @@ function showEditMode(article, entry) {
   article.classList.add("is-editing");
   article.innerHTML = "";
 
+  const dateLabel = document.createElement("label");
+  dateLabel.className = "edit-label";
+  dateLabel.textContent = "Kalendertag";
+
+  const dateInput = document.createElement("input");
+  dateInput.className = "edit-date-input";
+  dateInput.type = "date";
+  dateInput.max = getTodayInputValue();
+  dateInput.value = getEntryDayKey(entry);
+
   const label = document.createElement("label");
   label.className = "edit-label";
   label.textContent = "Stichpunkte bearbeiten";
@@ -812,20 +822,28 @@ function showEditMode(article, entry) {
 
   saveButton.addEventListener("click", async () => {
     const bullets = normalizeBulletText(textarea.value);
+    const entryDate = dateInput.value || getTodayInputValue();
 
     if (!bullets.length) {
       setStatus("Bitte behalte mindestens einen Stichpunkt.", "error");
       return;
     }
 
+    if (isFutureEntryDate(entryDate)) {
+      setStatus("Bitte wähle kein Datum in der Zukunft.", "error");
+      return;
+    }
+
     saveButton.disabled = true;
     cancelButton.disabled = true;
+    dateInput.disabled = true;
     setStatus("Eintrag wird aktualisiert ...");
 
     try {
       const { error } = await supabase
         .from("journal_entries")
         .update({
+          entry_date: entryDate,
           content: bullets.join("\n"),
           transcript: entry.originalText || "",
         })
@@ -842,11 +860,12 @@ function showEditMode(article, entry) {
       setStatus(error.message || "Eintrag konnte nicht bearbeitet werden.", "error");
       saveButton.disabled = false;
       cancelButton.disabled = false;
+      dateInput.disabled = false;
     }
   });
 
   actions.append(saveButton, cancelButton);
-  article.append(label, textarea, actions);
+  article.append(dateLabel, dateInput, label, textarea, actions);
   textarea.focus();
 }
 
