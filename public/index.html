@@ -8,31 +8,22 @@
   </head>
   <body>
     <main class="app-shell">
+      <div class="auth-bar">
+        <button type="button" onclick="loginWithGoogle()">
+          Mit Google anmelden
+        </button>
+      </div>
       <section class="intro">
         <div>
           <p class="eyebrow">Audio zu Gedanken</p>
           <h1>Dankbarkeitstagebuch</h1>
         </div>
-        <p class="intro-text">
-          Lade eine Sprachaufnahme hoch. Die App transkribiert sie lokal ueber das Backend,
-          erstellt Stichpunkte und speichert den Eintrag in deiner Datei.
-        </p>
       </section>
 
-      <section class="upload-panel" aria-labelledby="upload-title">
-        <h2 id="upload-title">Neuer Eintrag</h2>
-        <form id="upload-form">
-          <label class="file-picker">
-            <span>Audio-Datei auswaehlen</span>
-            <input id="audio" name="audio" type="file" accept="audio/*" required />
-          </label>
-          <div class="form-row">
-            <span id="file-name" class="file-name">Keine Datei ausgewaehlt</span>
-            <button id="submit-button" type="submit">Verarbeiten</button>
-          </div>
-        </form>
+      <section class="upload-panel" aria-labelledby="personal-greeting">
+        <h2 id="personal-greeting"></h2>
         <div class="recording-controls">
-          <button id="record-button" class="secondary-button" type="button">Aufnahme starten</button>
+          <button id="record-button" type="button">Aufnahme starten</button>
         </div>
         <div id="recording-visualizer" class="recording-visualizer" hidden>
           <span>Mikrofon aktiv</span>
@@ -65,18 +56,12 @@
       <section class="entries-section" aria-labelledby="entries-title">
         <div class="section-header">
           <h2 id="entries-title">Bisherige Eintraege</h2>
-          <div class="export-actions">
-            <button id="json-export-button" class="secondary-button" type="button">Backup exportieren</button>
-            <button id="markdown-export-button" class="secondary-button" type="button">Als Markdown exportieren</button>
-            <button id="import-button" class="secondary-button" type="button">Backup importieren</button>
-            <button id="refresh-button" class="secondary-button" type="button">Aktualisieren</button>
-          </div>
-          <input id="import-input" type="file" accept="application/json,.json" hidden />
+          <button id="refresh-button" class="secondary-button" type="button">Neu laden</button>
         </div>
         <div id="entries" class="entries"></div>
       </section>
     </main>
 
-    <script src="/app.js" defer></script>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>

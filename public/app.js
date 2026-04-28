@@ -1,14 +1,9 @@
-const form = document.querySelector("#upload-form");
-const audioInput = document.querySelector("#audio");
-const fileName = document.querySelector("#file-name");
+import { supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient.js";
 const statusText = document.querySelector("#status");
+const greetingEl = document.querySelector("#personal-greeting");
+const authBar = document.querySelector(".auth-bar");
 const entriesContainer = document.querySelector("#entries");
-const submitButton = document.querySelector("#submit-button");
 const refreshButton = document.querySelector("#refresh-button");
-const jsonExportButton = document.querySelector("#json-export-button");
-const markdownExportButton = document.querySelector("#markdown-export-button");
-const importButton = document.querySelector("#import-button");
-const importInput = document.querySelector("#import-input");
 const recordButton = document.querySelector("#record-button");
 const recordingVisualizer = document.querySelector("#recording-visualizer");
 const visualizerCanvas = document.querySelector("#visualizer-canvas");
@@ -39,6 +34,8 @@ let recordedAudioUrl = null;
 let recordedAudioFile = null;
 let currentDraft = null;
 let savedDraftFingerprint = "";
+let currentSession = null;
+let currentUser = null;
 
 const speakingThreshold = 0.035;
 const smoothingFactor = 0.82;
@@ -54,24 +51,125 @@ const dayFormatter = new Intl.DateTimeFormat("de-DE", {
   month: "long",
 });
 
+async function loginWithGoogle() {
+  try {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      throw error;
+    }
+  } catch (error) {
+    console.error(error);
+    setStatus("Login fehlgeschlagen.", "error");
+  }
+}
+
+window.loginWithGoogle = loginWithGoogle;
+
+function cleanAuthHashFromUrl() {
+  if (
+    window.location.hash.includes("access_token=") ||
+    window.location.hash.includes("refresh_token=") ||
+    window.location.hash.includes("error=")
+  ) {
+    window.history.replaceState(
+      null,
+      document.title,
+      window.location.pathname + window.location.search,
+    );
+  }
+}
+
+async function logout() {
+  try {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      throw error;
+    }
+
+    cleanAuthHashFromUrl();
+    renderAuthState(null);
+    await loadEntries();
+    setStatus("Ausgeloggt.", "success");
+  } catch (error) {
+    console.error(error);
+    setStatus("Logout fehlgeschlagen.", "error");
+  }
+}
+
+function renderAuthState(user) {
+  authBar.innerHTML = "";
+
+  if (!user) {
+    const loginButton = document.createElement("button");
+    loginButton.type = "button";
+    loginButton.textContent = "Mit Google anmelden";
+    loginButton.addEventListener("click", loginWithGoogle);
+    authBar.append(loginButton);
+    return;
+  }
+
+  const userLabel = document.createElement("span");
+  userLabel.textContent = `Eingeloggt als ${user.email}`;
+
+  const logoutButton = document.createElement("button");
+  logoutButton.type = "button";
+  logoutButton.textContent = "Logout";
+  logoutButton.addEventListener("click", logout);
+
+  authBar.append(userLabel, logoutButton);
+}
+
+function getFirstName(user) {
+  return (
+    user?.user_metadata?.given_name ||
+    user?.user_metadata?.full_name?.split(" ")[0] ||
+    user?.email?.split("@")[0] ||
+    ""
+  );
+}
+
+function renderGreeting(user) {
+  if (user) {
+    const firstName = getFirstName(user);
+    greetingEl.innerHTML = `Hallo ${firstName}.<br>Wof\u00fcr bist du heute dankbar?`;
+  } else {
+    greetingEl.innerHTML = "Hallo!<br>Wof\u00fcr bist du heute dankbar?";
+  }
+}
+
+async function showCurrentUser() {
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error) {
+    if (error.name === "AuthSessionMissingError") {
+      renderAuthState(null);
+      renderGreeting(null);
+      return;
+    }
+
+    console.error(error);
+    renderAuthState(null);
+    renderGreeting(null);
+    setStatus("Session konnte nicht gelesen werden.", "error");
+    return;
+  }
+
+  currentUser = data.user;
+  renderAuthState(data.user);
+  renderGreeting(data.user);
+  cleanAuthHashFromUrl();
+}
+
 function setStatus(message, type = "") {
   statusText.textContent = message;
   statusText.className = `status ${type}`.trim();
-}
-
-function downloadFromUrl(url) {
-  const link = document.createElement("a");
-  link.href = url;
-  document.body.append(link);
-  link.click();
-  link.remove();
-}
-
-function setBackupControlsDisabled(isDisabled) {
-  jsonExportButton.disabled = isDisabled;
-  markdownExportButton.disabled = isDisabled;
-  importButton.disabled = isDisabled;
-  refreshButton.disabled = isDisabled;
 }
 
 function getDayKey(date) {
@@ -205,18 +303,40 @@ function renderEntries(entries) {
   }
 }
 
+function mapJournalRowToEntry(row) {
+  return {
+    id: row.id,
+    date: row.created_at,
+    bullets: String(row.content || "").split("\n").filter(Boolean),
+    originalText: row.transcript || "",
+  };
+}
+
 async function loadEntries() {
-  const response = await fetch("/api/entries");
+  if (!currentUser || !currentSession?.access_token) {
+    renderEntries([]);
+    return;
+  }
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?select=*&order=created_at.desc`, {
+    headers: {
+      "apikey": supabaseAnonKey,
+      "Authorization": `Bearer ${currentSession.access_token}`,
+    },
+  });
+
+  const responseText = await response.text();
+  console.log("LOAD ENTRIES RESPONSE", response.status, responseText);
+
   if (!response.ok) {
     throw new Error("Eintraege konnten nicht geladen werden.");
   }
 
-  renderEntries(await response.json());
+  const data = responseText ? JSON.parse(responseText) : [];
+  renderEntries(data.map(mapJournalRowToEntry));
 }
 
 function setProcessing(isProcessing) {
-  submitButton.disabled = isProcessing;
-  audioInput.disabled = isProcessing;
   recordButton.disabled = isProcessing;
   discardRecordingButton.disabled = isProcessing || !recordedAudioFile;
   transcribeRecordingButton.disabled = isProcessing || !recordedAudioFile;
@@ -456,8 +576,6 @@ async function uploadAudioFile(audioFile) {
     }
 
     showDraftEditor(data);
-    form.reset();
-    fileName.textContent = "Keine Datei ausgewaehlt";
     setStatus("Entwurf bereit. Du kannst die Stichpunkte bearbeiten und speichern.", "success");
     return true;
   } catch (error) {
@@ -475,16 +593,19 @@ async function deleteEntry(id) {
 
   try {
     setStatus("Eintrag wird geloescht ...");
-    const response = await fetch(`/api/entries/${id}`, { method: "DELETE" });
+    const { error } = await supabase
+      .from("journal_entries")
+      .delete()
+      .eq("id", id);
 
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || "Eintrag konnte nicht geloescht werden.");
+    if (error) {
+      throw error;
     }
 
     setStatus("Eintrag geloescht.", "success");
     await loadEntries();
   } catch (error) {
+    console.error(error);
     setStatus(error.message || "Eintrag konnte nicht geloescht werden.", "error");
   }
 }
@@ -530,23 +651,22 @@ function showEditMode(article, entry) {
     setStatus("Eintrag wird aktualisiert ...");
 
     try {
-      const response = await fetch(`/api/entries/${entry.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          originalText: entry.originalText || "",
-          bullets,
-        }),
-      });
+      const { error } = await supabase
+        .from("journal_entries")
+        .update({
+          content: bullets.join("\n"),
+          transcript: entry.originalText || "",
+        })
+        .eq("id", entry.id);
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Eintrag konnte nicht bearbeitet werden.");
+      if (error) {
+        throw error;
       }
 
       setStatus("Eintrag aktualisiert.", "success");
       await loadEntries();
     } catch (error) {
+      console.error(error);
       setStatus(error.message || "Eintrag konnte nicht bearbeitet werden.", "error");
       saveButton.disabled = false;
       cancelButton.disabled = false;
@@ -558,13 +678,14 @@ function showEditMode(article, entry) {
   textarea.focus();
 }
 
-audioInput.addEventListener("change", () => {
-  fileName.textContent = audioInput.files[0]?.name || "Keine Datei ausgewaehlt";
-});
-
 recordButton.addEventListener("click", async () => {
   if (isRecording && mediaRecorder) {
     stopRecording();
+    return;
+  }
+
+  if (!currentUser || !currentSession?.access_token) {
+    setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
 
@@ -607,8 +728,6 @@ recordButton.addEventListener("click", async () => {
       isRecording = false;
       recordButton.textContent = "Aufnahme starten";
       recordButton.disabled = false;
-      submitButton.disabled = false;
-      audioInput.disabled = false;
 
       if (!recordedBlob.size) {
         clearRecordingPreview();
@@ -628,8 +747,6 @@ recordButton.addEventListener("click", async () => {
     startVisualizer(recordingStream);
     isRecording = true;
     recordButton.textContent = "Aufnahme stoppen";
-    submitButton.disabled = true;
-    audioInput.disabled = true;
     discardRecordingButton.disabled = true;
     transcribeRecordingButton.disabled = true;
     setStatus("Aufnahme laeuft ...");
@@ -637,8 +754,6 @@ recordButton.addEventListener("click", async () => {
     stopVisualizer();
     recordingStream?.getTracks().forEach((track) => track.stop());
     recordingStream = null;
-    submitButton.disabled = false;
-    audioInput.disabled = false;
 
     if (error.name === "NotAllowedError" || error.name === "SecurityError") {
       setStatus("Mikrofonzugriff wurde verweigert. Bitte erlaube den Zugriff im Browser.", "error");
@@ -660,6 +775,8 @@ discardDraftButton.addEventListener("click", () => {
 });
 
 saveDraftButton.addEventListener("click", async () => {
+  console.log("SAVE CLICKED");
+
   if (!currentDraft || saveDraftButton.disabled) {
     return;
   }
@@ -674,24 +791,45 @@ saveDraftButton.addEventListener("click", async () => {
   setStatus("Eintrag wird gespeichert ...");
 
   try {
-    const response = await fetch("/api/entries", {
+    console.log("BEFORE AUTH CHECK");
+    console.log("AUTH RESULT", currentUser, null);
+
+    if (!currentUser || !currentSession?.access_token) {
+      setStatus("Bitte melde dich zuerst an.", "error");
+      setProcessing(false);
+      return;
+    }
+
+    const payload = {
+      user_id: currentUser.id,
+      content: bullets.join("\n"),
+      transcript: currentDraft.originalText || "",
+    };
+
+    console.log("BEFORE INSERT", payload);
+    const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        originalText: currentDraft.originalText,
-        bullets,
-      }),
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": supabaseAnonKey,
+        "Authorization": `Bearer ${currentSession.access_token}`,
+        "Prefer": "return=representation",
+      },
+      body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
+    const responseText = await response.text();
+    console.log("DIRECT INSERT RESPONSE", response.status, responseText);
+
     if (!response.ok) {
-      throw new Error(data.error || "Eintrag konnte nicht gespeichert werden.");
+      throw new Error(responseText || "Eintrag konnte nicht gespeichert werden.");
     }
 
     clearDraftEditor();
     setStatus("Eintrag gespeichert.", "success");
     await loadEntries();
   } catch (error) {
+    console.error("SAVE ERROR:", error);
     setStatus(error.message || "Eintrag konnte nicht gespeichert werden.", "error");
     saveDraftButton.disabled = false;
     discardDraftButton.disabled = false;
@@ -702,6 +840,11 @@ saveDraftButton.addEventListener("click", async () => {
 
 transcribeRecordingButton.addEventListener("click", async () => {
   if (transcribeRecordingButton.disabled) {
+    return;
+  }
+
+  if (!currentUser || !currentSession?.access_token) {
+    setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
 
@@ -737,79 +880,26 @@ refreshButton.addEventListener("click", async () => {
   }
 });
 
-jsonExportButton.addEventListener("click", () => {
-  downloadFromUrl("/api/export/json");
-});
+clearRecordingPreview();
+clearDraftEditor();
 
-markdownExportButton.addEventListener("click", () => {
-  downloadFromUrl("/api/export/markdown");
-});
+supabase.auth.onAuthStateChange(async (_event, session) => {
+  currentSession = session;
+  currentUser = session?.user ?? null;
+  cleanAuthHashFromUrl();
+  renderAuthState(currentUser);
+  renderGreeting(currentUser);
 
-importButton.addEventListener("click", () => {
-  importInput.value = "";
-  importInput.click();
-});
-
-importInput.addEventListener("change", async () => {
-  const file = importInput.files[0];
-  if (!file) {
-    return;
+  if (currentUser && statusText.textContent === "Bitte melde dich zuerst an.") {
+    setStatus("");
   }
 
   try {
-    setBackupControlsDisabled(true);
-    setStatus("Backup wird importiert ...");
-    let importedEntries;
-
-    try {
-      importedEntries = JSON.parse(await file.text());
-    } catch {
-      throw new Error("Die ausgewaehlte Datei ist kein gueltiges JSON.");
-    }
-
-    if (!Array.isArray(importedEntries)) {
-      throw new Error("Das Backup muss ein JSON-Array mit Eintraegen sein.");
-    }
-
-    const response = await fetch("/api/import/json", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(importedEntries),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Backup konnte nicht importiert werden.");
-    }
-
-    setStatus(
-      `${data.imported} Eintraege importiert, ${data.skippedDuplicates} Duplikate uebersprungen, ${data.invalid} ungueltige Eintraege uebersprungen.`,
-      "success",
-    );
     await loadEntries();
   } catch (error) {
-    setStatus(error.message || "Backup konnte nicht importiert werden.", "error");
-  } finally {
-    setBackupControlsDisabled(false);
+    setStatus(error.message, "error");
   }
 });
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  if (isRecording) {
-    setStatus("Bitte stoppe zuerst die laufende Aufnahme.", "error");
-    return;
-  }
-
-  if (!audioInput.files.length) {
-    setStatus("Bitte waehle zuerst eine Audio-Datei aus.", "error");
-    return;
-  }
-
-  await uploadAudioFile(audioInput.files[0]);
-});
-
-clearRecordingPreview();
-clearDraftEditor();
+showCurrentUser().then(cleanAuthHashFromUrl);
 loadEntries().catch((error) => setStatus(error.message, "error"));

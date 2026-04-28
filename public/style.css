@@ -35,15 +35,27 @@ input {
 .app-shell {
   width: min(1040px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 48px 0;
+  padding: 56px 0 48px;
+}
+
+.auth-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+
+.auth-bar span {
+  color: #444;
+  font-size: 0.95rem;
 }
 
 .intro {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
-  gap: 32px;
-  align-items: end;
-  margin-bottom: 28px;
+  display: block;
+  max-width: 760px;
+  margin-bottom: 32px;
 }
 
 .eyebrow {
@@ -63,8 +75,11 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(2.25rem, 5vw, 4.5rem);
+  font-size: clamp(2.45rem, 7vw, 5.1rem);
   line-height: 0.95;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
 }
 
 h2 {
@@ -72,9 +87,10 @@ h2 {
   font-size: 1.2rem;
 }
 
-.intro-text {
-  margin-bottom: 4px;
-  color: var(--muted);
+#personal-greeting {
+  margin-bottom: 20px;
+  font-size: 1.4rem;
+  line-height: 1.4;
 }
 
 .upload-panel,
@@ -90,27 +106,6 @@ h2 {
   margin-bottom: 34px;
 }
 
-.file-picker {
-  display: block;
-  border: 1px dashed #b9aa99;
-  border-radius: 8px;
-  padding: 24px;
-  background: var(--surface-strong);
-  color: var(--accent-dark);
-  text-align: center;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.file-picker input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.form-row,
 .section-header {
   display: flex;
   gap: 16px;
@@ -118,21 +113,20 @@ h2 {
   justify-content: space-between;
 }
 
-.export-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.form-row {
-  margin-top: 18px;
+.section-header h2 {
+  margin-bottom: 0;
 }
 
 .recording-controls {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.recording-controls button {
+  min-width: min(100%, 280px);
+  min-height: 52px;
+  font-size: 1.05rem;
 }
 
 .recording-visualizer {
@@ -248,12 +242,6 @@ h2 {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
-}
-
-.file-name {
-  min-width: 0;
-  color: var(--muted);
-  overflow-wrap: anywhere;
 }
 
 button {
@@ -460,14 +448,11 @@ button:disabled {
 @media (max-width: 720px) {
   .app-shell {
     width: min(100% - 24px, 1040px);
-    padding: 28px 0;
+    padding: 32px 0 28px;
   }
 
-  .intro,
-  .form-row,
   .recording-controls,
-  .section-header,
-  .export-actions {
+  .section-header {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
@@ -479,6 +464,10 @@ button:disabled {
 
   button {
     width: 100%;
+  }
+
+  .auth-bar button {
+    width: auto;
   }
 
   .entry-header,
