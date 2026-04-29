@@ -66,6 +66,7 @@ let selectedCalendarDay = getDayKey(new Date());
 let minCalendarMonth = null;
 let returnToCalendarDayAfterSave = null;
 let helpReturnFocusElement = null;
+let hasCompletedInitialAuthLoad = false;
 
 const MODE_KEY = "gratitude_mode";
 const LEGACY_DEMO_MODE_KEY = "gratitude_demo_mode";
@@ -362,30 +363,43 @@ async function applySession(session) {
   }
 }
 
-async function initializeAuth() {
-  ensureDefaultDemoMode();
+function renderLoadingState() {
+  authBar.innerHTML = "";
+  const loadingLabel = document.createElement("span");
+  loadingLabel.textContent = "Lade...";
+  authBar.append(loadingLabel);
+  setStatus("Lade...");
+}
 
-  if (isDemoModeActive()) {
-    await applySession(null);
-    cleanAuthHashFromUrl();
-    return;
-  }
-
+async function initApp() {
+  renderLoadingState();
   const { data, error } = await supabase.auth.getSession();
+  const session = data?.session ?? null;
+  console.log("Session on load:", session);
 
   if (error) {
     console.error(error);
+    ensureDefaultDemoMode();
     await applySession(null);
     setStatus("Session konnte nicht gelesen werden.", "error");
+    hasCompletedInitialAuthLoad = true;
     return;
   }
 
-  if (data.session) {
+  if (session) {
     disableDemoMode();
+  } else {
+    ensureDefaultDemoMode();
   }
 
-  await applySession(data.session);
+  await applySession(session);
   cleanAuthHashFromUrl();
+
+  if (statusText.textContent === "Lade...") {
+    setStatus("");
+  }
+
+  hasCompletedInitialAuthLoad = true;
 }
 
 function setStatus(message, type = "") {
@@ -2316,6 +2330,10 @@ syncEntryDateLimit();
 setEntryDateFromOffset(0);
 
 async function handleAuthStateChange(_event, session) {
+  if (!hasCompletedInitialAuthLoad || _event === "INITIAL_SESSION") {
+    return;
+  }
+
   cleanAuthHashFromUrl();
 
   try {
@@ -2329,13 +2347,12 @@ async function handleAuthStateChange(_event, session) {
   }
 }
 
-initializeAuth()
+initApp()
   .catch((error) => {
     console.error(error);
+    hasCompletedInitialAuthLoad = true;
     setStatus(error.message || "Session konnte nicht gelesen werden.", "error");
   })
   .finally(() => {
-    if (!isDemoModeActive()) {
-      supabase.auth.onAuthStateChange(handleAuthStateChange);
-    }
+    supabase.auth.onAuthStateChange(handleAuthStateChange);
   });
