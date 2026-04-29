@@ -250,7 +250,7 @@ function renderDemoBanner() {
   banner.className = "demo-mode-banner";
 
   const message = document.createElement("p");
-  message.innerHTML = "⚠️ Du nutzt gerade die Testversion. Deine Einträge können verloren gehen. <br> Wenn du deine Einträge behalten möchtest, logge dich ein.";
+  message.innerHTML = "⚠️ Du nutzt gerade die Testversion. Deine Einträge können verloren gehen. <br> Wenn du deine Einträge behalten möchtest, melde dich bitte an.";
 
   const actions = document.createElement("div");
   actions.className = "demo-mode-banner-actions";
