@@ -246,20 +246,23 @@ async function logout() {
 }
 
 function renderDemoBanner() {
+  document.querySelector(".test-banner")?.remove();
   document.querySelector(".demo-mode-banner")?.remove();
 
   if (!isDemoModeActive()) {
+    document.body.classList.remove("has-test-banner");
     return;
   }
 
+  document.body.classList.add("has-test-banner");
   const banner = document.createElement("div");
-  banner.className = "demo-mode-banner";
+  banner.className = "test-banner";
 
   const message = document.createElement("p");
-  message.innerHTML = "⚠️ Du nutzt gerade die Testversion. Deine Einträge können verloren gehen. <br> Wenn du deine Einträge behalten möchtest, melde dich bitte an.";
+  message.textContent = "\u26a0\ufe0f Testversion \u2013 Eintr\u00e4ge k\u00f6nnen verloren gehen";
 
   const actions = document.createElement("div");
-  actions.className = "demo-mode-banner-actions";
+  actions.className = "test-banner-actions";
 
   const accountButton = document.createElement("button");
   accountButton.type = "button";
