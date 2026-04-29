@@ -1,6 +1,7 @@
 import { supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient.js";
 const statusText = document.querySelector("#status");
 const greetingEl = document.querySelector("#personal-greeting");
+const streakSummaryEl = document.querySelector("#streak-summary");
 const authBar = document.querySelector(".auth-bar");
 const tabButtons = document.querySelectorAll(".tab-button");
 const entriesView = document.querySelector("#entries-view");
@@ -498,6 +499,21 @@ function getLocalDateFromDayKey(dayKey) {
   return new Date(year, month - 1, day);
 }
 
+function addDaysToDayKey(dayKey, days) {
+  const date = getLocalDateFromDayKey(dayKey);
+  date.setDate(date.getDate() + days);
+  return getDayKey(date);
+}
+
+function getCreatedAtDayKey(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : getDayKey(date);
+}
+
 function getMonthBounds(date) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1);
   const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
@@ -594,6 +610,127 @@ function getCreatedDayKey(entry) {
 
 function isBackfilledEntry(entry) {
   return getEntryDayKey(entry) < getCreatedDayKey(entry);
+}
+
+function getStreakEntryDayKey(entry) {
+  const value = entry.entry_date || entry.date;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : getDayKey(date);
+}
+
+function isEntryStreakEligible(entry) {
+  if (entry.deleted_at || entry.deletedAt) {
+    return false;
+  }
+
+  const entryDay = getStreakEntryDayKey(entry);
+  const createdDay = getCreatedAtDayKey(entry.created_at || entry.createdAt);
+
+  if (!entryDay || !createdDay) {
+    return false;
+  }
+
+  return createdDay >= entryDay && createdDay <= addDaysToDayKey(entryDay, 2);
+}
+
+function getEligibleEntryDates(entries) {
+  return new Set(entries.filter(isEntryStreakEligible).map(getStreakEntryDayKey));
+}
+
+function calculateCurrentStreak(entryDates) {
+  const todayKey = getTodayInputValue();
+  const yesterdayKey = addDaysToDayKey(todayKey, -1);
+  const dateSet = entryDates instanceof Set ? entryDates : new Set(entryDates);
+
+  let cursor = "";
+  let todayOpen = false;
+
+  if (dateSet.has(todayKey)) {
+    cursor = todayKey;
+  } else if (dateSet.has(yesterdayKey)) {
+    cursor = yesterdayKey;
+    todayOpen = true;
+  } else {
+    return { days: 0, todayOpen: false };
+  }
+
+  let days = 0;
+  while (dateSet.has(cursor)) {
+    days += 1;
+    cursor = addDaysToDayKey(cursor, -1);
+  }
+
+  return { days, todayOpen };
+}
+
+function calculateLongestStreak(entryDates) {
+  const sortedDates = [...entryDates].sort();
+  let longest = 0;
+  let current = 0;
+  let previous = "";
+
+  for (const dayKey of sortedDates) {
+    current = previous && addDaysToDayKey(previous, 1) === dayKey ? current + 1 : 1;
+    longest = Math.max(longest, current);
+    previous = dayKey;
+  }
+
+  return longest;
+}
+
+function getStreakInfo(entries) {
+  const eligibleDates = getEligibleEntryDates(entries);
+  const current = calculateCurrentStreak(eligibleDates);
+  return {
+    currentDays: current.days,
+    todayOpen: current.todayOpen,
+    longestDays: calculateLongestStreak(eligibleDates),
+  };
+}
+
+function renderStreakSummary(streakInfo) {
+  streakSummaryEl.innerHTML = "";
+
+  if (!currentUser || isDemoModeActive()) {
+    streakSummaryEl.hidden = true;
+    return;
+  }
+
+  streakSummaryEl.hidden = false;
+
+  const infoButton = document.createElement("button");
+  infoButton.className = "streak-info-button";
+  infoButton.type = "button";
+  infoButton.setAttribute("aria-label", "Dein Streak z\u00e4hlt Tage mit rechtzeitig erstellten Eintr\u00e4gen. Nachtr\u00e4ge z\u00e4hlen bis zu 2 Tage r\u00fcckwirkend.");
+  infoButton.textContent = "\u24d8";
+
+  const tooltip = document.createElement("span");
+  tooltip.className = "streak-tooltip";
+  tooltip.textContent = "Dein Streak z\u00e4hlt Tage mit rechtzeitig erstellten Eintr\u00e4gen. Nachtr\u00e4ge z\u00e4hlen bis zu 2 Tage r\u00fcckwirkend.";
+
+  const text = document.createElement("span");
+  if (!streakInfo.currentDays) {
+    text.textContent = "Noch kein Streak - dein erster rechtzeitiger Eintrag startet ihn.";
+    streakSummaryEl.append(text, infoButton, tooltip);
+    return;
+  }
+
+  text.textContent = `\ud83c\udf31 ${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.todayOpen ? " - heute noch offen" : ""}`;
+  streakSummaryEl.append(text, infoButton, tooltip);
+
+  if (streakInfo.longestDays > streakInfo.currentDays) {
+    const longest = document.createElement("small");
+    longest.textContent = `L\u00e4ngster Streak: ${streakInfo.longestDays} Tage`;
+    streakSummaryEl.append(longest);
+  }
 }
 
 function formatDayHeading(dayKey) {
@@ -880,12 +1017,15 @@ async function permanentlyDeleteEntryData(id) {
 
 async function loadEntries() {
   if (isDemoModeActive()) {
-    renderEntries(getVisibleDemoRows().map(mapJournalRowToEntry));
+    const entries = getVisibleDemoRows().map(mapJournalRowToEntry);
+    renderEntries(entries);
+    renderStreakSummary(getStreakInfo(entries));
     return;
   }
 
   if (!currentUser || !currentSession?.access_token) {
     renderEntries([]);
+    renderStreakSummary(getStreakInfo([]));
     return;
   }
 
@@ -910,7 +1050,9 @@ async function loadEntries() {
   }
 
   const data = responseText ? JSON.parse(responseText) : [];
-  renderEntries(data.map(mapJournalRowToEntry));
+  const entries = data.map(mapJournalRowToEntry);
+  renderEntries(entries);
+  renderStreakSummary(getStreakInfo(entries));
 }
 
 async function loadCalendarBounds() {
@@ -2039,12 +2181,18 @@ saveDraftButton.addEventListener("click", async () => {
     };
 
     console.log("BEFORE INSERT", payload);
-    await createEntry(payload);
+    const savedEntry = await createEntry(payload);
 
     const calendarReturnDay = returnToCalendarDayAfterSave;
     returnToCalendarDayAfterSave = null;
     clearDraftEditor();
-    setStatus("Eintrag gespeichert.", "success");
+    const streakEligible = savedEntry ? isEntryStreakEligible(mapJournalRowToEntry(savedEntry)) : true;
+    setStatus(
+      streakEligible
+        ? "Eintrag gespeichert."
+        : "Eintrag gespeichert. Er z\u00e4hlt aber nicht mehr f\u00fcr deinen Streak.",
+      streakEligible ? "success" : "",
+    );
 
     if (calendarReturnDay) {
       selectedCalendarDay = calendarReturnDay;
