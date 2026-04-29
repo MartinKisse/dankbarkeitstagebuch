@@ -33,6 +33,8 @@ const draftOriginalText = document.querySelector("#draft-original-text");
 const draftOriginalDetails = document.querySelector("#draft-original-details");
 const discardDraftButton = document.querySelector("#discard-draft-button");
 const saveDraftButton = document.querySelector("#save-draft-button");
+const recordingControls = document.querySelector(".recording-controls");
+const manualEntryButton = document.createElement("button");
 
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -58,6 +60,12 @@ let calendarMonth = new Date();
 let calendarEntriesByDay = new Map();
 let selectedCalendarDay = getDayKey(new Date());
 let minCalendarMonth = null;
+let returnToCalendarDayAfterSave = null;
+
+const MODE_KEY = "gratitude_mode";
+const LEGACY_DEMO_MODE_KEY = "gratitude_demo_mode";
+const DEMO_ENTRIES_KEY = "gratitude_demo_entries";
+const DEMO_MODE_VALUE = "demo";
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -92,8 +100,16 @@ const deletedAtFormatter = new Intl.DateTimeFormat("de-DE", {
   timeStyle: "short",
 });
 
+manualEntryButton.id = "manual-entry-button";
+manualEntryButton.className = "secondary-button";
+manualEntryButton.type = "button";
+manualEntryButton.textContent = "\u270d\ufe0f Selbst schreiben";
+recordButton.textContent = "\ud83c\udfa4 Eintrag sprechen";
+recordingControls?.append(manualEntryButton);
+
 async function loginWithGoogle() {
   try {
+    disableDemoMode();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
@@ -111,6 +127,85 @@ async function loginWithGoogle() {
 }
 
 window.loginWithGoogle = loginWithGoogle;
+
+function isDemoModeActive() {
+  return localStorage.getItem(MODE_KEY) === DEMO_MODE_VALUE;
+}
+
+function hasAuthCallback() {
+  return (
+    window.location.hash.includes("access_token=") ||
+    window.location.hash.includes("refresh_token=") ||
+    window.location.hash.includes("error=")
+  );
+}
+
+function enableDemoMode() {
+  localStorage.setItem(MODE_KEY, DEMO_MODE_VALUE);
+  localStorage.removeItem(LEGACY_DEMO_MODE_KEY);
+}
+
+function ensureDefaultDemoMode() {
+  if (localStorage.getItem(LEGACY_DEMO_MODE_KEY) === "true") {
+    enableDemoMode();
+    return;
+  }
+
+  if (!localStorage.getItem(MODE_KEY) && !hasAuthCallback()) {
+    enableDemoMode();
+  }
+}
+
+function hasJournalAccess() {
+  return isDemoModeActive() || Boolean(currentUser && currentSession?.access_token);
+}
+
+function readDemoRows() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DEMO_ENTRIES_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn("Demo-Eintraege konnten nicht gelesen werden.", error);
+    return [];
+  }
+}
+
+function writeDemoRows(rows) {
+  localStorage.setItem(DEMO_ENTRIES_KEY, JSON.stringify(rows));
+}
+
+function createLocalId() {
+  return globalThis.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function disableDemoMode() {
+  localStorage.removeItem(MODE_KEY);
+  localStorage.removeItem(LEGACY_DEMO_MODE_KEY);
+}
+
+async function startDemoMode() {
+  enableDemoMode();
+  currentSession = null;
+  currentUser = null;
+  cleanAuthHashFromUrl();
+  await applySession(null);
+  setStatus("Testmodus aktiv.", "success");
+}
+
+async function useRealAccount() {
+  disableDemoMode();
+  await loginWithGoogle();
+}
+
+async function clearDemoEntries() {
+  if (!confirm("Lokale Testdaten wirklich l\u00f6schen?")) {
+    return;
+  }
+
+  localStorage.removeItem(DEMO_ENTRIES_KEY);
+  await refreshJournalViews();
+  setStatus("Lokale Testdaten gel\u00f6scht.", "success");
+}
 
 function cleanAuthHashFromUrl() {
   if (
@@ -135,22 +230,64 @@ async function logout() {
     }
 
     cleanAuthHashFromUrl();
+    enableDemoMode();
     await applySession(null);
-    setStatus("Ausgeloggt.", "success");
+    setStatus("Ausgeloggt. Testmodus aktiv.", "success");
   } catch (error) {
     console.error(error);
     setStatus("Logout fehlgeschlagen.", "error");
   }
 }
 
+function renderDemoBanner() {
+  document.querySelector(".demo-mode-banner")?.remove();
+
+  if (!isDemoModeActive()) {
+    return;
+  }
+
+  const banner = document.createElement("div");
+  banner.className = "demo-mode-banner";
+
+  const message = document.createElement("p");
+  message.innerHTML = "⚠️ Du nutzt gerade die Testversion. Deine Einträge können verloren gehen. <br> Wenn du deine Einträge behalten möchtest, logge dich ein.";
+
+  const actions = document.createElement("div");
+  actions.className = "demo-mode-banner-actions";
+
+  const accountButton = document.createElement("button");
+  accountButton.type = "button";
+  accountButton.textContent = "Mit Google anmelden";
+  accountButton.addEventListener("click", useRealAccount);
+
+  actions.append(accountButton);
+  banner.append(message, actions);
+  document.body.prepend(banner);
+}
+
 function renderAuthState(user) {
   authBar.innerHTML = "";
+  renderDemoBanner();
+
+  if (isDemoModeActive()) {
+    return;
+  }
 
   if (!user) {
     const loginButton = document.createElement("button");
     loginButton.type = "button";
     loginButton.textContent = "Mit Google anmelden";
     loginButton.addEventListener("click", loginWithGoogle);
+
+    const demoButton = document.createElement("button");
+    demoButton.className = "secondary-button";
+    demoButton.type = "button";
+    demoButton.textContent = "Ohne Login testen";
+    demoButton.addEventListener("click", startDemoMode);
+
+    const demoHint = document.createElement("p");
+    demoHint.className = "demo-mode-hint";
+    demoHint.textContent = "Im Testmodus werden deine Eintr\u00e4ge nur in diesem Browser gespeichert. Es wird kein Konto erstellt und nichts in der Datenbank gespeichert.";
 
     const legalHint = document.createElement("p");
     legalHint.className = "legal-hint";
@@ -161,7 +298,7 @@ function renderAuthState(user) {
     legalLink.textContent = "Datenschutzbestimmungen";
     legalHint.append(legalLink, ".");
 
-    authBar.append(loginButton, legalHint);
+    authBar.append(loginButton, demoButton, demoHint, legalHint);
     return;
   }
 
@@ -195,13 +332,13 @@ function renderGreeting(user) {
 }
 
 async function applySession(session) {
-  const hadUser = Boolean(currentUser);
+  const hadAccess = hasJournalAccess();
   currentSession = session;
   currentUser = session?.user ?? null;
   renderAuthState(currentUser);
   renderGreeting(currentUser);
 
-  if (currentUser && statusText.textContent === "Bitte melde dich zuerst an.") {
+  if (hasJournalAccess() && statusText.textContent === "Bitte melde dich zuerst an.") {
     setStatus("");
   }
 
@@ -210,9 +347,9 @@ async function applySession(session) {
   await loadEntriesForMonth();
   await loadTrashEntries();
 
-  if (currentUser && !hadUser) {
+  if (hasJournalAccess() && !hadAccess) {
     switchView("entries");
-  } else if (!currentUser) {
+  } else if (!hasJournalAccess()) {
     switchView("entries");
     renderCalendar();
     renderDayEntries(selectedCalendarDay);
@@ -221,6 +358,14 @@ async function applySession(session) {
 }
 
 async function initializeAuth() {
+  ensureDefaultDemoMode();
+
+  if (isDemoModeActive()) {
+    await applySession(null);
+    cleanAuthHashFromUrl();
+    return;
+  }
+
   const { data, error } = await supabase.auth.getSession();
 
   if (error) {
@@ -228,6 +373,10 @@ async function initializeAuth() {
     await applySession(null);
     setStatus("Session konnte nicht gelesen werden.", "error");
     return;
+  }
+
+  if (data.session) {
+    disableDemoMode();
   }
 
   await applySession(data.session);
@@ -337,11 +486,11 @@ function clampCalendarMonth() {
 }
 
 function canGoToPreviousMonth() {
-  return currentUser && getMonthKey(calendarMonth) > getMonthKey(getMinCalendarMonth());
+  return hasJournalAccess() && getMonthKey(calendarMonth) > getMonthKey(getMinCalendarMonth());
 }
 
 function canGoToNextMonth() {
-  return currentUser && getMonthKey(calendarMonth) < getMonthKey(getMaxCalendarMonth());
+  return hasJournalAccess() && getMonthKey(calendarMonth) < getMonthKey(getMaxCalendarMonth());
 }
 
 function getCalendarDayEntries(dayKey) {
@@ -548,7 +697,136 @@ function mapJournalRowToEntry(row) {
   };
 }
 
+function getVisibleDemoRows() {
+  return readDemoRows()
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => !row.deleted_at)
+    .filter((row) => row.entry_date || row.created_at)
+    .sort((a, b) => {
+      const dateComparison = new Date(b.entry_date || b.created_at) - new Date(a.entry_date || a.created_at);
+      if (dateComparison) {
+        return dateComparison;
+      }
+
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+}
+
+function getDeletedDemoRows() {
+  return readDemoRows()
+    .filter((row) => row && typeof row === "object")
+    .filter((row) => row.deleted_at)
+    .sort((a, b) => new Date(b.deleted_at) - new Date(a.deleted_at));
+}
+
+function getDemoRowsForMonth() {
+  const { startKey, endKey } = getMonthBounds(calendarMonth);
+  return getVisibleDemoRows()
+    .filter((row) => row.entry_date >= startKey && row.entry_date <= endKey)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+}
+
+async function createEntry(entry) {
+  if (isDemoModeActive()) {
+    const now = new Date().toISOString();
+    const row = {
+      id: createLocalId(),
+      entry_date: entry.entry_date,
+      created_at: now,
+      content: entry.content,
+      transcript: entry.transcript || "",
+      deleted_at: null,
+    };
+    writeDemoRows([row, ...readDemoRows()]);
+    return row;
+  }
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": supabaseAnonKey,
+      "Authorization": `Bearer ${currentSession.access_token}`,
+      "Prefer": "return=representation",
+    },
+    body: JSON.stringify({
+      user_id: currentUser.id,
+      ...entry,
+    }),
+  });
+
+  const responseText = await response.text();
+  console.log("DIRECT INSERT RESPONSE", response.status, responseText);
+
+  if (!response.ok) {
+    throw new Error(responseText || "Eintrag konnte nicht gespeichert werden.");
+  }
+
+  return responseText ? JSON.parse(responseText)[0] : null;
+}
+
+async function updateEntry(id, patch) {
+  if (isDemoModeActive()) {
+    const rows = readDemoRows();
+    const index = rows.findIndex((row) => row.id === id);
+    if (index === -1) {
+      throw new Error("Eintrag wurde nicht gefunden.");
+    }
+
+    rows[index] = {
+      ...rows[index],
+      ...patch,
+      updated_at: new Date().toISOString(),
+    };
+    writeDemoRows(rows);
+    return rows[index];
+  }
+
+  const { error } = await supabase
+    .from("journal_entries")
+    .update(patch)
+    .eq("id", id)
+    .eq("user_id", currentUser.id);
+
+  if (error) {
+    throw error;
+  }
+
+  return null;
+}
+
+async function softDeleteEntry(id) {
+  return updateEntry(id, { deleted_at: new Date().toISOString() });
+}
+
+async function restoreEntryData(id) {
+  return updateEntry(id, { deleted_at: null });
+}
+
+async function permanentlyDeleteEntryData(id) {
+  if (isDemoModeActive()) {
+    writeDemoRows(readDemoRows().filter((row) => row.id !== id || !row.deleted_at));
+    return;
+  }
+
+  const { error } = await supabase
+    .from("journal_entries")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", currentUser.id)
+    .not("deleted_at", "is", null);
+
+  if (error) {
+    throw error;
+  }
+}
+
 async function loadEntries() {
+  if (isDemoModeActive()) {
+    renderEntries(getVisibleDemoRows().map(mapJournalRowToEntry));
+    return;
+  }
+
   if (!currentUser || !currentSession?.access_token) {
     renderEntries([]);
     return;
@@ -579,6 +857,20 @@ async function loadEntries() {
 }
 
 async function loadCalendarBounds() {
+  if (isDemoModeActive()) {
+    const rows = getVisibleDemoRows().sort((a, b) => new Date(a.entry_date || a.created_at) - new Date(b.entry_date || b.created_at));
+    if (!rows.length) {
+      minCalendarMonth = getMaxCalendarMonth();
+      calendarMonth = getMaxCalendarMonth();
+      selectedCalendarDay = getTodayInputValue();
+      return;
+    }
+
+    minCalendarMonth = getMonthStart(getLocalDateFromDayKey(rows[0].entry_date || getDayKey(new Date(rows[0].created_at))));
+    clampCalendarMonth();
+    return;
+  }
+
   if (!currentUser || !currentSession?.access_token) {
     minCalendarMonth = null;
     calendarMonth = getMaxCalendarMonth();
@@ -622,6 +914,14 @@ async function loadCalendarBounds() {
 }
 
 async function loadEntriesForMonth() {
+  if (isDemoModeActive()) {
+    clampCalendarMonth();
+    calendarEntriesByDay = groupCalendarEntries(getDemoRowsForMonth());
+    renderCalendar();
+    renderDayEntries(selectedCalendarDay);
+    return;
+  }
+
   if (!currentUser || !currentSession?.access_token) {
     calendarEntriesByDay = new Map();
     renderCalendar();
@@ -664,7 +964,7 @@ function renderCalendar() {
   calendarMonthLabel.textContent = calendarMonthFormatter.format(calendarMonth);
   calendarPrevButton.disabled = !canGoToPreviousMonth();
   calendarNextButton.disabled = !canGoToNextMonth();
-  calendarTodayButton.disabled = !currentUser || (isSameMonth(calendarMonth, new Date()) && selectedCalendarDay === getTodayInputValue());
+  calendarTodayButton.disabled = !hasJournalAccess() || (isSameMonth(calendarMonth, new Date()) && selectedCalendarDay === getTodayInputValue());
 
   const { start, end } = getMonthBounds(calendarMonth);
   const firstWeekday = (start.getDay() + 6) % 7;
@@ -687,7 +987,7 @@ function renderCalendar() {
     dayButton.type = "button";
     dayButton.dataset.day = dayKey;
     dayButton.setAttribute("aria-label", `${entryDateFormatter.format(date)}, ${dayEntries.length} Einträge`);
-    dayButton.disabled = isFutureDay || !currentUser;
+    dayButton.disabled = isFutureDay || !hasJournalAccess();
 
     if (dayEntries.length) {
       dayButton.classList.add("has-entries");
@@ -732,6 +1032,30 @@ function handleDayClick(dayKey) {
   renderDayEntries(dayKey);
 }
 
+function setNewEntryDate(dayKey) {
+  syncEntryDateLimit();
+  entryDateInput.value = dayKey;
+}
+
+function createCalendarEntryActions(dayKey) {
+  const actions = document.createElement("div");
+  actions.className = "calendar-new-entry-actions";
+
+  const voiceButton = document.createElement("button");
+  voiceButton.type = "button";
+  voiceButton.textContent = "\ud83c\udfa4 Eintrag f\u00fcr diesen Tag sprechen";
+  voiceButton.addEventListener("click", () => startCalendarVoiceEntry(dayKey));
+
+  const writeButton = document.createElement("button");
+  writeButton.className = "secondary-button";
+  writeButton.type = "button";
+  writeButton.textContent = "\u270d\ufe0f Selbst schreiben";
+  writeButton.addEventListener("click", () => startCalendarManualEntry(dayKey));
+
+  actions.append(voiceButton, writeButton);
+  return actions;
+}
+
 function renderDayEntries(dayKey) {
   calendarDayEntries.innerHTML = "";
 
@@ -746,6 +1070,7 @@ function renderDayEntries(dayKey) {
     empty.className = "empty-state";
     empty.textContent = "Für diesen Tag gibt es noch keinen Eintrag.";
     calendarDayEntries.append(empty);
+    calendarDayEntries.append(createCalendarEntryActions(dayKey));
     return;
   }
 
@@ -757,12 +1082,13 @@ function renderDayEntries(dayKey) {
   }
 
   calendarDayEntries.append(list);
+  calendarDayEntries.append(createCalendarEntryActions(dayKey));
 }
 
 function renderTrashEntries(entries) {
   trashEntriesContainer.innerHTML = "";
 
-  if (!currentUser) {
+  if (!hasJournalAccess()) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
     empty.textContent = "Bitte melde dich an, um den Papierkorb zu sehen.";
@@ -840,6 +1166,11 @@ function renderTrashEntries(entries) {
 }
 
 async function loadTrashEntries() {
+  if (isDemoModeActive()) {
+    renderTrashEntries(getDeletedDemoRows());
+    return;
+  }
+
   if (!currentUser || !currentSession?.access_token) {
     renderTrashEntries([]);
     return;
@@ -868,22 +1199,13 @@ async function refreshJournalViews() {
 }
 
 async function restoreEntry(id) {
-  if (!currentUser) {
+  if (!hasJournalAccess()) {
     setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
 
   try {
-    const { error } = await supabase
-      .from("journal_entries")
-      .update({ deleted_at: null })
-      .eq("id", id)
-      .eq("user_id", currentUser.id);
-
-    if (error) {
-      throw error;
-    }
-
+    await restoreEntryData(id);
     setStatus("Eintrag wiederhergestellt.", "success");
     await refreshJournalViews();
   } catch (error) {
@@ -893,7 +1215,7 @@ async function restoreEntry(id) {
 }
 
 async function permanentlyDeleteEntry(id) {
-  if (!currentUser) {
+  if (!hasJournalAccess()) {
     setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
@@ -903,17 +1225,7 @@ async function permanentlyDeleteEntry(id) {
   }
 
   try {
-    const { error } = await supabase
-      .from("journal_entries")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", currentUser.id)
-      .not("deleted_at", "is", null);
-
-    if (error) {
-      throw error;
-    }
-
+    await permanentlyDeleteEntryData(id);
     setStatus("Eintrag endgültig gelöscht.", "success");
     await loadTrashEntries();
   } catch (error) {
@@ -923,6 +1235,7 @@ async function permanentlyDeleteEntry(id) {
 }
 
 function setProcessing(isProcessing) {
+  manualEntryButton.disabled = isProcessing;
   recordButton.disabled = isProcessing;
   discardRecordingButton.disabled = isProcessing || !recordedAudioFile;
   transcribeRecordingButton.disabled = isProcessing || !recordedAudioFile;
@@ -986,6 +1299,61 @@ function confirmDiscardDraft() {
   }
 
   return confirm("Es gibt einen ungespeicherten Entwurf. Möchtest du ihn verwerfen?");
+}
+
+function startManualEntry() {
+  if (!hasJournalAccess()) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return false;
+  }
+
+  if (!confirmDiscardDraft()) {
+    return false;
+  }
+
+  clearRecordingPreview();
+  showDraftEditor({ originalText: "", bullets: [] });
+  draftBullets.focus();
+  setStatus("Schreibe deine Stichpunkte und speichere den Eintrag.", "success");
+  return true;
+}
+
+function prepareCalendarEntry(dayKey) {
+  if (!hasJournalAccess()) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return false;
+  }
+
+  if (isFutureEntryDate(dayKey)) {
+    setStatus("Bitte w\u00e4hle kein Datum in der Zukunft.", "error");
+    return false;
+  }
+
+  setNewEntryDate(dayKey);
+  returnToCalendarDayAfterSave = dayKey;
+  switchView("entries");
+  return true;
+}
+
+async function startCalendarVoiceEntry(dayKey) {
+  if (!prepareCalendarEntry(dayKey)) {
+    return;
+  }
+
+  const started = await startVoiceRecording();
+  if (!started) {
+    returnToCalendarDayAfterSave = null;
+  }
+}
+
+function startCalendarManualEntry(dayKey) {
+  if (!prepareCalendarEntry(dayKey)) {
+    return;
+  }
+
+  if (!startManualEntry()) {
+    returnToCalendarDayAfterSave = null;
+  }
 }
 
 function getRecordingMimeType() {
@@ -1271,23 +1639,14 @@ async function deleteEntry(id) {
     return;
   }
 
-  if (!currentUser) {
+  if (!hasJournalAccess()) {
     setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
 
   try {
     setStatus("Eintrag wird gelöscht ...");
-    const { error } = await supabase
-      .from("journal_entries")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", id)
-      .eq("user_id", currentUser.id);
-
-    if (error) {
-      throw error;
-    }
-
+    await softDeleteEntry(id);
     setStatus("Eintrag gelöscht.", "success");
     await refreshJournalViews();
   } catch (error) {
@@ -1354,19 +1713,11 @@ function showEditMode(article, entry) {
     setStatus("Eintrag wird aktualisiert ...");
 
     try {
-      const { error } = await supabase
-        .from("journal_entries")
-        .update({
-          entry_date: entryDate,
-          content: bullets.join("\n"),
-          transcript: entry.originalText || "",
-        })
-        .eq("id", entry.id);
-
-      if (error) {
-        throw error;
-      }
-
+      await updateEntry(entry.id, {
+        entry_date: entryDate,
+        content: bullets.join("\n"),
+        transcript: entry.originalText || "",
+      });
       setStatus("Eintrag aktualisiert.", "success");
       await refreshJournalViews();
     } catch (error) {
@@ -1383,13 +1734,101 @@ function showEditMode(article, entry) {
   textarea.focus();
 }
 
+async function startVoiceRecording() {
+  if (!hasJournalAccess()) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return false;
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    setStatus("Dein Browser unterst\u00fctzt Mikrofonaufnahmen leider nicht.", "error");
+    return false;
+  }
+
+  if (!confirmDiscardDraft()) {
+    return false;
+  }
+
+  try {
+    clearRecordingPreview();
+    clearDraftEditor();
+    recordedChunks = [];
+    const mimeType = getRecordingMimeType();
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(
+      recordingStream,
+      mimeType ? { mimeType } : undefined,
+    );
+
+    mediaRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) {
+        recordedChunks.push(event.data);
+      }
+    });
+
+    mediaRecorder.addEventListener("stop", async () => {
+      const type = mediaRecorder.mimeType || mimeType || "audio/webm";
+      const extension = getRecordingFileExtension(type);
+      recordedBlob = new Blob(recordedChunks, { type });
+      recordedAudioFile = new File([recordedBlob], `aufnahme-${Date.now()}.${extension}`, { type });
+
+      stopVisualizer();
+      recordingStream?.getTracks().forEach((track) => track.stop());
+      recordingStream = null;
+      mediaRecorder = null;
+      isRecording = false;
+      recordButton.textContent = "\ud83c\udfa4 Eintrag sprechen";
+      recordButton.disabled = false;
+
+      if (!recordedBlob.size) {
+        clearRecordingPreview();
+        setStatus("Die Aufnahme war leer. Bitte versuche es noch einmal.", "error");
+        return;
+      }
+
+      recordedAudioUrl = URL.createObjectURL(recordedBlob);
+      await prepareRecordingPreview(recordingAudio, recordedAudioUrl);
+      recordingPreview.hidden = false;
+      discardRecordingButton.disabled = false;
+      transcribeRecordingButton.disabled = false;
+      setStatus("Aufnahme bereit. Du kannst sie anh\u00f6ren, verwerfen oder transkribieren.", "success");
+    });
+
+    mediaRecorder.start();
+    isRecording = true;
+    startVisualizer(recordingStream);
+    recordButton.textContent = "Aufnahme stoppen";
+    discardRecordingButton.disabled = true;
+    transcribeRecordingButton.disabled = true;
+    setStatus("Aufnahme l\u00e4uft ...");
+    return true;
+  } catch (error) {
+    stopVisualizer();
+    recordingStream?.getTracks().forEach((track) => track.stop());
+    recordingStream = null;
+
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      setStatus("Mikrofonzugriff wurde verweigert. Bitte erlaube den Zugriff im Browser.", "error");
+      return false;
+    }
+
+    setStatus("Mikrofonaufnahme konnte nicht gestartet werden.", "error");
+    return false;
+  }
+}
+
 recordButton.addEventListener("click", async () => {
+  returnToCalendarDayAfterSave = null;
+
   if (isRecording && mediaRecorder) {
     stopRecording();
     return;
   }
 
-  if (!currentUser || !currentSession?.access_token) {
+  await startVoiceRecording();
+  return;
+
+  if (!hasJournalAccess()) {
     setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
@@ -1431,7 +1870,7 @@ recordButton.addEventListener("click", async () => {
       recordingStream = null;
       mediaRecorder = null;
       isRecording = false;
-      recordButton.textContent = "Aufnahme starten";
+      recordButton.textContent = "\ud83c\udfa4 Eintrag sprechen";
       recordButton.disabled = false;
 
       if (!recordedBlob.size) {
@@ -1470,11 +1909,13 @@ recordButton.addEventListener("click", async () => {
 });
 
 discardRecordingButton.addEventListener("click", () => {
+  returnToCalendarDayAfterSave = null;
   clearRecordingPreview();
   setStatus("Aufnahme verworfen.");
 });
 
 discardDraftButton.addEventListener("click", () => {
+  returnToCalendarDayAfterSave = null;
   clearDraftEditor();
   setStatus("Entwurf verworfen.");
 });
@@ -1485,6 +1926,11 @@ entryDateTodayButton.addEventListener("click", () => {
 
 entryDateYesterdayButton.addEventListener("click", () => {
   setEntryDateFromOffset(-1);
+});
+
+manualEntryButton.addEventListener("click", () => {
+  returnToCalendarDayAfterSave = null;
+  startManualEntry();
 });
 
 saveDraftButton.addEventListener("click", async () => {
@@ -1514,41 +1960,36 @@ saveDraftButton.addEventListener("click", async () => {
     console.log("BEFORE AUTH CHECK");
     console.log("AUTH RESULT", currentUser, null);
 
-    if (!currentUser || !currentSession?.access_token) {
+    if (!hasJournalAccess()) {
       setStatus("Bitte melde dich zuerst an.", "error");
       setProcessing(false);
       return;
     }
 
     const payload = {
-      user_id: currentUser.id,
       entry_date: entryDate,
       content: bullets.join("\n"),
       transcript: currentDraft.originalText || "",
     };
 
     console.log("BEFORE INSERT", payload);
-    const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": supabaseAnonKey,
-        "Authorization": `Bearer ${currentSession.access_token}`,
-        "Prefer": "return=representation",
-      },
-      body: JSON.stringify(payload),
-    });
+    await createEntry(payload);
 
-    const responseText = await response.text();
-    console.log("DIRECT INSERT RESPONSE", response.status, responseText);
+    const calendarReturnDay = returnToCalendarDayAfterSave;
+    returnToCalendarDayAfterSave = null;
+    clearDraftEditor();
+    setStatus("Eintrag gespeichert.", "success");
 
-    if (!response.ok) {
-      throw new Error(responseText || "Eintrag konnte nicht gespeichert werden.");
+    if (calendarReturnDay) {
+      selectedCalendarDay = calendarReturnDay;
+      calendarMonth = getMonthStart(getLocalDateFromDayKey(calendarReturnDay));
+      setNewEntryDate(calendarReturnDay);
+      await refreshJournalViews();
+      switchView("calendar");
+      return;
     }
 
-    clearDraftEditor();
     setEntryDateFromOffset(0);
-    setStatus("Eintrag gespeichert.", "success");
     await refreshJournalViews();
   } catch (error) {
     console.error("SAVE ERROR:", error);
@@ -1565,7 +2006,7 @@ transcribeRecordingButton.addEventListener("click", async () => {
     return;
   }
 
-  if (!currentUser || !currentSession?.access_token) {
+  if (!hasJournalAccess()) {
     setStatus("Bitte melde dich zuerst an.", "error");
     return;
   }
@@ -1664,6 +2105,10 @@ async function handleAuthStateChange(_event, session) {
   cleanAuthHashFromUrl();
 
   try {
+    if (session) {
+      disableDemoMode();
+    }
+
     await applySession(session);
   } catch (error) {
     setStatus(error.message, "error");
@@ -1676,5 +2121,7 @@ initializeAuth()
     setStatus(error.message || "Session konnte nicht gelesen werden.", "error");
   })
   .finally(() => {
-    supabase.auth.onAuthStateChange(handleAuthStateChange);
+    if (!isDemoModeActive()) {
+      supabase.auth.onAuthStateChange(handleAuthStateChange);
+    }
   });

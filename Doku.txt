@@ -34,3 +34,6 @@ Ich muss ausstellen, dass die Aufnahme aufhört, wenn man mal 2 Sekunde nichts s
 Außerdem würde ich gerne das Design der Wellen beim Sprechen ändern.
 
 
+Wenn man auf der Seite mit den Kalender ist, sollte man auch einen Tag auswählen können und dort direkt einen Eintrag machen können!
+
+
