@@ -259,7 +259,7 @@ function renderDemoBanner() {
   banner.className = "test-banner";
 
   const message = document.createElement("p");
-  message.textContent = "\u26a0\ufe0f Testversion \u2013 Eintr\u00e4ge k\u00f6nnen verloren gehen";
+  message.textContent = "\u26a0\ufe0f Testversion";
 
   const actions = document.createElement("div");
   actions.className = "test-banner-actions";
@@ -734,14 +734,18 @@ function renderStreakSummary(streakInfo) {
   tooltip.textContent = "Dein Streak z\u00e4hlt Tage mit rechtzeitig erstellten Eintr\u00e4gen. Nachtr\u00e4ge z\u00e4hlen bis zu 2 Tage r\u00fcckwirkend.";
 
   const text = document.createElement("span");
+  text.className = "streak-text";
   if (!streakInfo.currentDays) {
     text.textContent = "Noch kein Streak - dein erster rechtzeitiger Eintrag startet ihn.";
     streakSummaryEl.append(text, infoButton, tooltip);
     return;
   }
 
-  text.textContent = `\ud83c\udf31 ${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.todayOpen ? " - heute noch offen" : ""}`;
-  streakSummaryEl.append(text, infoButton, tooltip);
+  const icon = document.createElement("span");
+  icon.className = "streak-icon";
+  icon.textContent = "\ud83c\udf31";
+  text.textContent = `${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.todayOpen ? " - heute noch offen" : ""}`;
+  streakSummaryEl.append(icon, text, infoButton, tooltip);
 
   if (streakInfo.longestDays > streakInfo.currentDays) {
     const longest = document.createElement("small");
