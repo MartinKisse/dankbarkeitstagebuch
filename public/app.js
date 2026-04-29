@@ -744,7 +744,7 @@ function renderStreakSummary(streakInfo) {
   const icon = document.createElement("span");
   icon.className = "streak-icon";
   icon.textContent = "\ud83c\udf31";
-  text.textContent = `${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.todayOpen ? " - heute noch offen" : ""}`;
+  text.innerHTML = `${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.todayOpen ? "<br>heute noch offen" : ""}`;
   streakSummaryEl.append(icon, text, infoButton, tooltip);
 
   if (streakInfo.longestDays > streakInfo.currentDays) {
