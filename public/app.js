@@ -2,6 +2,18 @@ import { supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient.js";
 const statusText = document.querySelector("#status");
 const greetingEl = document.querySelector("#personal-greeting");
 const authBar = document.querySelector(".auth-bar");
+const tabButtons = document.querySelectorAll(".tab-button");
+const entriesView = document.querySelector("#entries-view");
+const calendarView = document.querySelector("#calendar-view");
+const trashView = document.querySelector("#trash-view");
+const calendarGrid = document.querySelector("#calendar-grid");
+const calendarMonthLabel = document.querySelector("#calendar-month-label");
+const calendarDayEntries = document.querySelector("#calendar-day-entries");
+const calendarPrevButton = document.querySelector("#calendar-prev");
+const calendarNextButton = document.querySelector("#calendar-next");
+const calendarTodayButton = document.querySelector("#calendar-today");
+const trashEntriesContainer = document.querySelector("#trash-entries");
+const trashBackButton = document.querySelector("#trash-back-button");
 const entriesContainer = document.querySelector("#entries");
 const refreshButton = document.querySelector("#refresh-button");
 const recordButton = document.querySelector("#record-button");
@@ -41,6 +53,11 @@ let currentDraft = null;
 let savedDraftFingerprint = "";
 let currentSession = null;
 let currentUser = null;
+let currentView = "entries";
+let calendarMonth = new Date();
+let calendarEntriesByDay = new Map();
+let selectedCalendarDay = getDayKey(new Date());
+let minCalendarMonth = null;
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -63,6 +80,16 @@ const entryDateFormatter = new Intl.DateTimeFormat("de-DE", {
   day: "numeric",
   month: "long",
   year: "numeric",
+});
+
+const calendarMonthFormatter = new Intl.DateTimeFormat("de-DE", {
+  month: "long",
+  year: "numeric",
+});
+
+const deletedAtFormatter = new Intl.DateTimeFormat("de-DE", {
+  dateStyle: "medium",
+  timeStyle: "short",
 });
 
 async function loginWithGoogle() {
@@ -168,6 +195,7 @@ function renderGreeting(user) {
 }
 
 async function applySession(session) {
+  const hadUser = Boolean(currentUser);
   currentSession = session;
   currentUser = session?.user ?? null;
   renderAuthState(currentUser);
@@ -178,6 +206,18 @@ async function applySession(session) {
   }
 
   await loadEntries();
+  await loadCalendarBounds();
+  await loadEntriesForMonth();
+  await loadTrashEntries();
+
+  if (currentUser && !hadUser) {
+    switchView("entries");
+  } else if (!currentUser) {
+    switchView("entries");
+    renderCalendar();
+    renderDayEntries(selectedCalendarDay);
+    renderTrashEntries([]);
+  }
 }
 
 async function initializeAuth() {
@@ -197,6 +237,31 @@ async function initializeAuth() {
 function setStatus(message, type = "") {
   statusText.textContent = message;
   statusText.className = `status ${type}`.trim();
+}
+
+function switchView(viewName) {
+  currentView = viewName;
+  entriesView.hidden = viewName !== "entries";
+  calendarView.hidden = viewName !== "calendar";
+  trashView.hidden = viewName !== "trash";
+
+  for (const button of tabButtons) {
+    const isActive = button.dataset.view === viewName;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  }
+
+  if (viewName === "calendar") {
+    renderCalendar();
+    renderDayEntries(selectedCalendarDay);
+  }
+
+  if (viewName === "trash") {
+    loadTrashEntries().catch((error) => {
+      console.error(error);
+      setStatus(error.message || "Papierkorb konnte nicht geladen werden.", "error");
+    });
+  }
 }
 
 function getDayKey(date) {
@@ -220,6 +285,86 @@ function getDateInputValue(date) {
 
 function getTodayInputValue() {
   return getDateInputValue(new Date());
+}
+
+function getLocalDateFromDayKey(dayKey) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function getMonthBounds(date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return {
+    start,
+    end,
+    startKey: getDayKey(start),
+    endKey: getDayKey(end),
+  };
+}
+
+function getMonthStart(date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getMonthKey(date) {
+  return getDayKey(getMonthStart(date));
+}
+
+function isSameMonth(date, otherDate) {
+  return date.getFullYear() === otherDate.getFullYear() && date.getMonth() === otherDate.getMonth();
+}
+
+function getMaxCalendarMonth() {
+  return getMonthStart(new Date());
+}
+
+function getMinCalendarMonth() {
+  return minCalendarMonth || getMaxCalendarMonth();
+}
+
+function clampCalendarMonth() {
+  const minMonth = getMinCalendarMonth();
+  const maxMonth = getMaxCalendarMonth();
+
+  if (getMonthKey(calendarMonth) < getMonthKey(minMonth)) {
+    calendarMonth = new Date(minMonth);
+  }
+
+  if (getMonthKey(calendarMonth) > getMonthKey(maxMonth)) {
+    calendarMonth = new Date(maxMonth);
+  }
+}
+
+function canGoToPreviousMonth() {
+  return currentUser && getMonthKey(calendarMonth) > getMonthKey(getMinCalendarMonth());
+}
+
+function canGoToNextMonth() {
+  return currentUser && getMonthKey(calendarMonth) < getMonthKey(getMaxCalendarMonth());
+}
+
+function getCalendarDayEntries(dayKey) {
+  return calendarEntriesByDay.get(dayKey) || [];
+}
+
+function groupCalendarEntries(rows) {
+  const grouped = new Map();
+
+  for (const row of rows) {
+    const entry = mapJournalRowToEntry(row);
+    const dayKey = getEntryDayKey(entry);
+    if (!grouped.has(dayKey)) {
+      grouped.set(dayKey, []);
+    }
+    grouped.get(dayKey).push(entry);
+  }
+
+  for (const entries of grouped.values()) {
+    entries.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  }
+
+  return grouped;
 }
 
 function syncEntryDateLimit() {
@@ -409,7 +554,13 @@ async function loadEntries() {
     return;
   }
 
-  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?select=*&order=entry_date.desc.nullslast,created_at.desc`, {
+  const query = new URLSearchParams({
+    select: "*",
+    deleted_at: "is.null",
+    order: "entry_date.desc.nullslast,created_at.desc",
+  });
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?${query.toString()}`, {
     headers: {
       "apikey": supabaseAnonKey,
       "Authorization": `Bearer ${currentSession.access_token}`,
@@ -425,6 +576,350 @@ async function loadEntries() {
 
   const data = responseText ? JSON.parse(responseText) : [];
   renderEntries(data.map(mapJournalRowToEntry));
+}
+
+async function loadCalendarBounds() {
+  if (!currentUser || !currentSession?.access_token) {
+    minCalendarMonth = null;
+    calendarMonth = getMaxCalendarMonth();
+    selectedCalendarDay = getTodayInputValue();
+    return;
+  }
+
+  const query = new URLSearchParams({
+    select: "entry_date,created_at",
+    deleted_at: "is.null",
+    order: "entry_date.asc.nullslast,created_at.asc",
+    limit: "1",
+  });
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?${query.toString()}`, {
+    headers: {
+      "apikey": supabaseAnonKey,
+      "Authorization": `Bearer ${currentSession.access_token}`,
+    },
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error("Kalendergrenzen konnten nicht geladen werden.");
+  }
+
+  const data = responseText ? JSON.parse(responseText) : [];
+  if (!data.length) {
+    minCalendarMonth = getMaxCalendarMonth();
+    calendarMonth = getMaxCalendarMonth();
+    selectedCalendarDay = getTodayInputValue();
+    return;
+  }
+
+  const firstEntryDate = data[0].entry_date
+    ? getLocalDateFromDayKey(data[0].entry_date)
+    : new Date(data[0].created_at);
+  minCalendarMonth = getMonthStart(firstEntryDate);
+  clampCalendarMonth();
+}
+
+async function loadEntriesForMonth() {
+  if (!currentUser || !currentSession?.access_token) {
+    calendarEntriesByDay = new Map();
+    renderCalendar();
+    renderDayEntries(selectedCalendarDay);
+    return;
+  }
+
+  clampCalendarMonth();
+  const { startKey, endKey } = getMonthBounds(calendarMonth);
+  const query = new URLSearchParams({
+    select: "*",
+    entry_date: `gte.${startKey}`,
+    deleted_at: "is.null",
+    order: "created_at.asc",
+  });
+  query.append("entry_date", `lte.${endKey}`);
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries?${query.toString()}`, {
+    headers: {
+      "apikey": supabaseAnonKey,
+      "Authorization": `Bearer ${currentSession.access_token}`,
+    },
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error("Kalendereinträge konnten nicht geladen werden.");
+  }
+
+  const data = responseText ? JSON.parse(responseText) : [];
+  calendarEntriesByDay = groupCalendarEntries(data);
+  renderCalendar();
+  renderDayEntries(selectedCalendarDay);
+}
+
+function renderCalendar() {
+  calendarGrid.innerHTML = "";
+  clampCalendarMonth();
+  calendarMonthLabel.textContent = calendarMonthFormatter.format(calendarMonth);
+  calendarPrevButton.disabled = !canGoToPreviousMonth();
+  calendarNextButton.disabled = !canGoToNextMonth();
+  calendarTodayButton.disabled = !currentUser || (isSameMonth(calendarMonth, new Date()) && selectedCalendarDay === getTodayInputValue());
+
+  const { start, end } = getMonthBounds(calendarMonth);
+  const firstWeekday = (start.getDay() + 6) % 7;
+  const daysInMonth = end.getDate();
+  const todayKey = getTodayInputValue();
+
+  for (let index = 0; index < firstWeekday; index++) {
+    const emptyDay = document.createElement("div");
+    emptyDay.className = "calendar-day is-outside";
+    calendarGrid.append(emptyDay);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+    const dayKey = getDayKey(date);
+    const dayEntries = getCalendarDayEntries(dayKey);
+    const isFutureDay = dayKey > todayKey;
+    const dayButton = document.createElement("button");
+    dayButton.className = "calendar-day";
+    dayButton.type = "button";
+    dayButton.dataset.day = dayKey;
+    dayButton.setAttribute("aria-label", `${entryDateFormatter.format(date)}, ${dayEntries.length} Einträge`);
+    dayButton.disabled = isFutureDay || !currentUser;
+
+    if (dayEntries.length) {
+      dayButton.classList.add("has-entries");
+    }
+
+    if (isFutureDay) {
+      dayButton.classList.add("is-disabled");
+    }
+
+    if (dayKey === todayKey) {
+      dayButton.classList.add("is-today");
+    }
+
+    if (dayKey === selectedCalendarDay) {
+      dayButton.classList.add("is-selected");
+    }
+
+    const dayNumber = document.createElement("span");
+    dayNumber.className = "calendar-day-number";
+    dayNumber.textContent = String(day);
+    dayButton.append(dayNumber);
+
+    if (dayEntries.length) {
+      const count = document.createElement("span");
+      count.className = "calendar-entry-count";
+      count.textContent = String(dayEntries.length);
+      dayButton.append(count);
+    }
+
+    dayButton.addEventListener("click", () => handleDayClick(dayKey));
+    calendarGrid.append(dayButton);
+  }
+}
+
+function handleDayClick(dayKey) {
+  if (dayKey > getTodayInputValue()) {
+    return;
+  }
+
+  selectedCalendarDay = dayKey;
+  renderCalendar();
+  renderDayEntries(dayKey);
+}
+
+function renderDayEntries(dayKey) {
+  calendarDayEntries.innerHTML = "";
+
+  const date = getLocalDateFromDayKey(dayKey);
+  const heading = document.createElement("h3");
+  heading.textContent = entryDateFormatter.format(date);
+  calendarDayEntries.append(heading);
+
+  const entries = getCalendarDayEntries(dayKey);
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "Für diesen Tag gibt es noch keinen Eintrag.";
+    calendarDayEntries.append(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "calendar-entry-list";
+
+  for (const entry of entries) {
+    list.append(createEntryElement(entry));
+  }
+
+  calendarDayEntries.append(list);
+}
+
+function renderTrashEntries(entries) {
+  trashEntriesContainer.innerHTML = "";
+
+  if (!currentUser) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "Bitte melde dich an, um den Papierkorb zu sehen.";
+    trashEntriesContainer.append(empty);
+    return;
+  }
+
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "Dein Papierkorb ist leer.";
+    trashEntriesContainer.append(empty);
+    return;
+  }
+
+  for (const entry of entries) {
+    const article = document.createElement("article");
+    article.className = "trash-entry";
+
+    const header = document.createElement("div");
+    header.className = "entry-header";
+
+    const meta = document.createElement("div");
+    meta.className = "entry-meta";
+
+    const entryDate = document.createElement("time");
+    entryDate.dateTime = entry.entry_date || entry.created_at;
+    entryDate.textContent = entryDateFormatter.format(getLocalDateFromDayKey(entry.entry_date || getDayKey(new Date(entry.created_at))));
+    meta.append(entryDate);
+
+    if (entry.deleted_at) {
+      const deletedLabel = document.createElement("span");
+      deletedLabel.className = "entry-backfilled-label";
+      deletedLabel.textContent = `Gelöscht am ${deletedAtFormatter.format(new Date(entry.deleted_at))}`;
+      meta.append(deletedLabel);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "entry-actions";
+
+    const restoreButton = document.createElement("button");
+    restoreButton.className = "secondary-button";
+    restoreButton.type = "button";
+    restoreButton.textContent = "Wiederherstellen";
+    restoreButton.addEventListener("click", () => restoreEntry(entry.id));
+
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "danger-button";
+    deleteButton.type = "button";
+    deleteButton.textContent = "Endgültig löschen";
+    deleteButton.addEventListener("click", () => permanentlyDeleteEntry(entry.id));
+
+    actions.append(restoreButton, deleteButton);
+    header.append(meta, actions);
+
+    const list = document.createElement("ul");
+    list.className = "entry-bullets";
+    for (const bullet of String(entry.content || "").split("\n").filter(Boolean)) {
+      const item = document.createElement("li");
+      item.textContent = bullet;
+      list.append(item);
+    }
+
+    if (!list.children.length) {
+      const emptyContent = document.createElement("p");
+      emptyContent.className = "original-text";
+      emptyContent.textContent = "Kein Inhalt vorhanden.";
+      article.append(header, emptyContent);
+    } else {
+      article.append(header, list);
+    }
+
+    trashEntriesContainer.append(article);
+  }
+}
+
+async function loadTrashEntries() {
+  if (!currentUser || !currentSession?.access_token) {
+    renderTrashEntries([]);
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("journal_entries")
+    .select("id,entry_date,created_at,content,deleted_at")
+    .eq("user_id", currentUser.id)
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false });
+
+  if (error) {
+    console.error(error);
+    throw new Error("Papierkorb konnte nicht geladen werden.");
+  }
+
+  renderTrashEntries(data || []);
+}
+
+async function refreshJournalViews() {
+  await loadEntries();
+  await loadCalendarBounds();
+  await loadEntriesForMonth();
+  await loadTrashEntries();
+}
+
+async function restoreEntry(id) {
+  if (!currentUser) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return;
+  }
+
+  try {
+    const { error } = await supabase
+      .from("journal_entries")
+      .update({ deleted_at: null })
+      .eq("id", id)
+      .eq("user_id", currentUser.id);
+
+    if (error) {
+      throw error;
+    }
+
+    setStatus("Eintrag wiederhergestellt.", "success");
+    await refreshJournalViews();
+  } catch (error) {
+    console.error(error);
+    setStatus(error.message || "Eintrag konnte nicht wiederhergestellt werden.", "error");
+  }
+}
+
+async function permanentlyDeleteEntry(id) {
+  if (!currentUser) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return;
+  }
+
+  if (!confirm("Diesen Eintrag endgültig löschen? Das kann nicht rückgängig gemacht werden.")) {
+    return;
+  }
+
+  try {
+    const { error } = await supabase
+      .from("journal_entries")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", currentUser.id)
+      .not("deleted_at", "is", null);
+
+    if (error) {
+      throw error;
+    }
+
+    setStatus("Eintrag endgültig gelöscht.", "success");
+    await loadTrashEntries();
+  } catch (error) {
+    console.error(error);
+    setStatus(error.message || "Eintrag konnte nicht endgültig gelöscht werden.", "error");
+  }
 }
 
 function setProcessing(isProcessing) {
@@ -776,19 +1271,25 @@ async function deleteEntry(id) {
     return;
   }
 
+  if (!currentUser) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return;
+  }
+
   try {
     setStatus("Eintrag wird gelöscht ...");
     const { error } = await supabase
       .from("journal_entries")
-      .delete()
-      .eq("id", id);
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("user_id", currentUser.id);
 
     if (error) {
       throw error;
     }
 
     setStatus("Eintrag gelöscht.", "success");
-    await loadEntries();
+    await refreshJournalViews();
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Eintrag konnte nicht gelöscht werden.", "error");
@@ -867,7 +1368,7 @@ function showEditMode(article, entry) {
       }
 
       setStatus("Eintrag aktualisiert.", "success");
-      await loadEntries();
+      await refreshJournalViews();
     } catch (error) {
       console.error(error);
       setStatus(error.message || "Eintrag konnte nicht bearbeitet werden.", "error");
@@ -1048,7 +1549,7 @@ saveDraftButton.addEventListener("click", async () => {
     clearDraftEditor();
     setEntryDateFromOffset(0);
     setStatus("Eintrag gespeichert.", "success");
-    await loadEntries();
+    await refreshJournalViews();
   } catch (error) {
     console.error("SAVE ERROR:", error);
     setStatus(error.message || "Eintrag konnte nicht gespeichert werden.", "error");
@@ -1094,8 +1595,61 @@ transcribeRecordingButton.addEventListener("click", async () => {
 refreshButton.addEventListener("click", async () => {
   try {
     setStatus("Einträge werden aktualisiert ...");
-    await loadEntries();
+    await refreshJournalViews();
     setStatus("");
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+});
+
+for (const button of tabButtons) {
+  button.addEventListener("click", () => {
+    switchView(button.dataset.view);
+  });
+}
+
+trashBackButton.addEventListener("click", () => {
+  switchView("entries");
+});
+
+calendarPrevButton.addEventListener("click", async () => {
+  if (!canGoToPreviousMonth()) {
+    return;
+  }
+
+  calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1);
+  selectedCalendarDay = getDayKey(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1));
+
+  try {
+    await loadEntriesForMonth();
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+});
+
+calendarNextButton.addEventListener("click", async () => {
+  if (!canGoToNextMonth()) {
+    return;
+  }
+
+  calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1);
+  selectedCalendarDay = isSameMonth(calendarMonth, new Date())
+    ? getTodayInputValue()
+    : getDayKey(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1));
+
+  try {
+    await loadEntriesForMonth();
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+});
+
+calendarTodayButton.addEventListener("click", async () => {
+  calendarMonth = getMaxCalendarMonth();
+  selectedCalendarDay = getTodayInputValue();
+
+  try {
+    await loadEntriesForMonth();
   } catch (error) {
     setStatus(error.message, "error");
   }

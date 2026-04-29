@@ -29,6 +29,19 @@
         </div>
       </section>
 
+      <nav class="app-tabs" aria-label="Hauptbereiche">
+        <button class="tab-button is-active" type="button" data-view="entries" aria-controls="entries-view" aria-selected="true">
+          Einträge
+        </button>
+        <button class="tab-button" type="button" data-view="calendar" aria-controls="calendar-view" aria-selected="false">
+          Kalender
+        </button>
+        <button class="tab-button" type="button" data-view="trash" aria-controls="trash-view" aria-selected="false">
+          Papierkorb
+        </button>
+      </nav>
+
+      <div id="entries-view" class="app-view">
       <section class="upload-panel" aria-labelledby="personal-greeting">
         <h2 id="personal-greeting"></h2>
         <div class="entry-date-control">
@@ -68,7 +81,6 @@
             <button id="save-draft-button" type="button">Speichern</button>
           </div>
         </div>
-        <p id="status" class="status" role="status" aria-live="polite"></p>
       </section>
 
       <section class="entries-section" aria-labelledby="entries-title">
@@ -78,6 +90,44 @@
         </div>
         <div id="entries" class="entries"></div>
       </section>
+      </div>
+
+      <section id="calendar-view" class="app-view" aria-labelledby="calendar-title" hidden>
+        <div class="calendar-panel">
+          <div class="calendar-header">
+            <button id="calendar-prev" class="secondary-button" type="button">← Monat zurück</button>
+            <h2 id="calendar-title">Kalender</h2>
+            <button id="calendar-next" class="secondary-button" type="button">Monat vor →</button>
+          </div>
+          <div class="calendar-shortcuts">
+            <button id="calendar-today" class="secondary-button" type="button">Zu heute</button>
+          </div>
+          <div id="calendar-month-label" class="calendar-month-label"></div>
+          <div class="calendar-weekdays" aria-hidden="true">
+            <span>Mo</span>
+            <span>Di</span>
+            <span>Mi</span>
+            <span>Do</span>
+            <span>Fr</span>
+            <span>Sa</span>
+            <span>So</span>
+          </div>
+          <div id="calendar-grid" class="calendar-grid"></div>
+          <div id="calendar-day-entries" class="calendar-day-entries" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section id="trash-view" class="app-view" aria-labelledby="trash-title" hidden>
+        <div class="trash-panel">
+          <div class="section-header">
+            <h2 id="trash-title">Papierkorb</h2>
+            <button id="trash-back-button" class="secondary-button" type="button">Zurück zu den Einträgen</button>
+          </div>
+          <div id="trash-entries" class="trash-entries"></div>
+        </div>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </main>
 
     <footer class="footer">
