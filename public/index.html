@@ -26,6 +26,9 @@
         <div class="app-header">
           <img src="/icon-192.png" alt="Logo" class="app-logo" />
           <h1>Dankbarkeitstagebuch</h1>
+          <button id="help-button" class="help-button" type="button" aria-label="Hilfe und Tipps öffnen" aria-haspopup="dialog">
+            ?
+          </button>
         </div>
       </section>
 
@@ -57,6 +60,7 @@
         <div class="recording-controls">
           <button id="record-button" type="button">Aufnahme starten</button>
         </div>
+        <p class="entry-quality-tip">Tipp: Was genau ist passiert - und warum war es gut f&uuml;r dich?</p>
         <div id="recording-visualizer" class="recording-visualizer" hidden>
           <span>Mikrofon aktiv</span>
           <canvas id="visualizer-canvas" width="360" height="72" aria-hidden="true"></canvas>
@@ -76,6 +80,7 @@
             <summary>Originaltext anzeigen</summary>
             <p id="draft-original-text"></p>
           </details>
+          <p class="draft-reflection-tip">Magst du noch erg&auml;nzen, warum dir dieser Moment wichtig war?</p>
           <div class="draft-actions">
             <button id="discard-draft-button" class="secondary-button" type="button">Entwurf verwerfen</button>
             <button id="save-draft-button" type="button">Speichern</button>
@@ -129,6 +134,92 @@
 
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </main>
+
+    <div id="help-modal" class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+      <div class="help-dialog" role="document">
+        <div class="help-dialog-header">
+          <h2 id="help-title">Hilfe & Inspiration</h2>
+          <button id="help-close-button" class="help-close-button" type="button" aria-label="Hilfe schließen">
+            &times;
+          </button>
+        </div>
+
+        <div class="help-dialog-content">
+          <section class="help-section" aria-labelledby="help-short-title">
+            <h3 id="help-short-title">Kurz erkl&auml;rt</h3>
+            <p>Ein Dankbarkeitstagebuch hilft dir, gute Momente bewusster wahrzunehmen. Es geht nicht darum, alles sch&ouml;nzureden - sondern echte Dinge festzuhalten, die dir gutgetan haben.</p>
+            <p class="help-muted">Studien zeigen: Dankbarkeits&uuml;bungen k&ouml;nnen das Wohlbefinden leicht bis moderat verbessern - besonders, wenn man konkret wird und kurz erkl&auml;rt, warum etwas wichtig war.</p>
+          </section>
+
+          <section class="help-section" aria-labelledby="help-rules-title">
+            <h3 id="help-rules-title">So holst du mehr daraus heraus</h3>
+            <div class="help-rule-grid">
+              <article class="help-rule">
+                <h4>Sei konkret</h4>
+                <p>Nicht nur: Ich bin dankbar f&uuml;r meine Freunde. Sondern: Ich bin dankbar, dass Lisa mir heute zugeh&ouml;rt hat, weil ich mich danach viel leichter gef&uuml;hlt habe.</p>
+              </article>
+              <article class="help-rule help-rule-highlight">
+                <span class="help-rule-label">Wichtig</span>
+                <h4>Sag auch warum</h4>
+                <p>Das ist oft der wichtigste Teil: Warum hat dir dieser Moment gutgetan?</p>
+                <p>Der Effekt wird st&auml;rker, wenn du kurz erkl&auml;rst, warum dir etwas wichtig war.</p>
+              </article>
+              <article class="help-rule">
+                <h4>Erlebe den Moment nochmal</h4>
+                <p>Versuch beim Sprechen oder Schreiben kurz an die Situation zur&uuml;ckzudenken.</p>
+              </article>
+              <article class="help-rule">
+                <h4>Qualit&auml;t vor Menge</h4>
+                <p>Ein ehrlicher, konkreter Gedanke ist wertvoller als f&uuml;nf oberfl&auml;chliche Punkte.</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="help-section" aria-labelledby="help-examples-title">
+            <h3 id="help-examples-title">Beispiele als Inspiration</h3>
+            <p class="help-muted">Du musst diese Beispiele nicht kopieren. Sie sollen dir nur helfen, eigene Gedanken zu finden.</p>
+            <div class="help-example-grid">
+              <article>
+                <h4>Alltag</h4>
+                <ul>
+                  <li>Ich bin dankbar, dass ich heute einen ruhigen Moment f&uuml;r mich hatte.</li>
+                  <li>Ich bin dankbar f&uuml;r den Spaziergang, weil ich danach klarer im Kopf war.</li>
+                </ul>
+              </article>
+              <article>
+                <h4>Menschen</h4>
+                <ul>
+                  <li>Ich bin dankbar, dass mir jemand ehrlich zugeh&ouml;rt hat.</li>
+                  <li>Ich bin dankbar, dass ich heute jemanden zum Lachen bringen konnte.</li>
+                </ul>
+              </article>
+              <article>
+                <h4>K&ouml;rper & Gesundheit</h4>
+                <ul>
+                  <li>Ich bin dankbar, dass mein K&ouml;rper mich durch den Tag getragen hat.</li>
+                  <li>Ich bin dankbar, dass ich gesund genug bin, um meinen Alltag selbstst&auml;ndig zu leben.</li>
+                </ul>
+              </article>
+              <article>
+                <h4>Freiheit & Sicherheit</h4>
+                <ul>
+                  <li>Ich bin dankbar, in einem Umfeld zu leben, in dem ich meine Pers&ouml;nlichkeit ausleben kann.</li>
+                  <li>Ich bin dankbar f&uuml;r ein Zuhause, in dem ich mich sicher f&uuml;hlen kann.</li>
+                </ul>
+              </article>
+              <article>
+                <h4>Pers&ouml;nliche Entwicklung</h4>
+                <ul>
+                  <li>Ich bin dankbar, dass ich heute etwas geschafft habe, obwohl ich keine Lust hatte.</li>
+                  <li>Ich bin dankbar, dass ich in einer schwierigen Situation ruhig geblieben bin.</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+          <p class="help-closing-note">Ein ehrlicher Gedanke reicht. Du musst nichts perfekt formulieren.</p>
+        </div>
+      </div>
+    </div>
 
     <footer class="footer">
       <a href="/legal.html">Impressum & Datenschutz</a>

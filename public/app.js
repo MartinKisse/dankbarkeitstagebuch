@@ -34,6 +34,9 @@ const draftOriginalDetails = document.querySelector("#draft-original-details");
 const discardDraftButton = document.querySelector("#discard-draft-button");
 const saveDraftButton = document.querySelector("#save-draft-button");
 const recordingControls = document.querySelector(".recording-controls");
+const helpButton = document.querySelector("#help-button");
+const helpModal = document.querySelector("#help-modal");
+const helpCloseButton = document.querySelector("#help-close-button");
 const manualEntryButton = document.createElement("button");
 
 let mediaRecorder = null;
@@ -61,6 +64,7 @@ let calendarEntriesByDay = new Map();
 let selectedCalendarDay = getDayKey(new Date());
 let minCalendarMonth = null;
 let returnToCalendarDayAfterSave = null;
+let helpReturnFocusElement = null;
 
 const MODE_KEY = "gratitude_mode";
 const LEGACY_DEMO_MODE_KEY = "gratitude_demo_mode";
@@ -386,6 +390,59 @@ async function initializeAuth() {
 function setStatus(message, type = "") {
   statusText.textContent = message;
   statusText.className = `status ${type}`.trim();
+}
+
+function getHelpFocusableElements() {
+  return [...helpModal.querySelectorAll("button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => !element.disabled && element.offsetParent !== null);
+}
+
+function openHelpModal() {
+  helpReturnFocusElement = document.activeElement;
+  helpModal.hidden = false;
+  document.body.classList.add("has-modal-open");
+  helpCloseButton.focus();
+}
+
+function closeHelpModal() {
+  helpModal.hidden = true;
+  document.body.classList.remove("has-modal-open");
+
+  if (helpReturnFocusElement) {
+    helpReturnFocusElement.focus();
+    helpReturnFocusElement = null;
+  }
+}
+
+function handleHelpModalKeydown(event) {
+  if (helpModal.hidden) {
+    return;
+  }
+
+  if (event.key === "Escape") {
+    closeHelpModal();
+    return;
+  }
+
+  if (event.key !== "Tab") {
+    return;
+  }
+
+  const focusableElements = getHelpFocusableElements();
+  const firstElement = focusableElements[0];
+  const lastElement = focusableElements[focusableElements.length - 1];
+
+  if (!firstElement || !lastElement) {
+    return;
+  }
+
+  if (event.shiftKey && document.activeElement === firstElement) {
+    event.preventDefault();
+    lastElement.focus();
+  } else if (!event.shiftKey && document.activeElement === lastElement) {
+    event.preventDefault();
+    firstElement.focus();
+  }
 }
 
 function switchView(viewName) {
@@ -1797,7 +1854,7 @@ async function startVoiceRecording() {
     mediaRecorder.start();
     isRecording = true;
     startVisualizer(recordingStream);
-    recordButton.textContent = "Aufnahme stoppen";
+    recordButton.textContent = "⏹️ Aufnahme stoppen";
     discardRecordingButton.disabled = true;
     transcribeRecordingButton.disabled = true;
     setStatus("Aufnahme l\u00e4uft ...");
@@ -1932,6 +1989,15 @@ manualEntryButton.addEventListener("click", () => {
   returnToCalendarDayAfterSave = null;
   startManualEntry();
 });
+
+helpButton.addEventListener("click", openHelpModal);
+helpCloseButton.addEventListener("click", closeHelpModal);
+helpModal.addEventListener("click", (event) => {
+  if (event.target === helpModal) {
+    closeHelpModal();
+  }
+});
+document.addEventListener("keydown", handleHelpModalKeydown);
 
 saveDraftButton.addEventListener("click", async () => {
   console.log("SAVE CLICKED");
