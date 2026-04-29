@@ -11,5 +11,11 @@ const config = await configResponse.json();
 export const supabaseUrl = config.supabaseUrl;
 export const supabaseAnonKey = config.supabaseAnonKey;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
 window.supabase = supabase;

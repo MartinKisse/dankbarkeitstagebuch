@@ -92,9 +92,9 @@ function cleanAuthHashFromUrl() {
     window.location.hash.includes("error=")
   ) {
     window.history.replaceState(
-      null,
+      {},
       document.title,
-      window.location.pathname + window.location.search,
+      window.location.pathname,
     );
   }
 }
@@ -108,8 +108,7 @@ async function logout() {
     }
 
     cleanAuthHashFromUrl();
-    renderAuthState(null);
-    await loadEntries();
+    await applySession(null);
     setStatus("Ausgeloggt.", "success");
   } catch (error) {
     console.error(error);
@@ -158,26 +157,30 @@ function renderGreeting(user) {
   }
 }
 
-async function showCurrentUser() {
-  const { data, error } = await supabase.auth.getUser();
+async function applySession(session) {
+  currentSession = session;
+  currentUser = session?.user ?? null;
+  renderAuthState(currentUser);
+  renderGreeting(currentUser);
+
+  if (currentUser && statusText.textContent === "Bitte melde dich zuerst an.") {
+    setStatus("");
+  }
+
+  await loadEntries();
+}
+
+async function initializeAuth() {
+  const { data, error } = await supabase.auth.getSession();
 
   if (error) {
-    if (error.name === "AuthSessionMissingError") {
-      renderAuthState(null);
-      renderGreeting(null);
-      return;
-    }
-
     console.error(error);
-    renderAuthState(null);
-    renderGreeting(null);
+    await applySession(null);
     setStatus("Session konnte nicht gelesen werden.", "error");
     return;
   }
 
-  currentUser = data.user;
-  renderAuthState(data.user);
-  renderGreeting(data.user);
+  await applySession(data.session);
   cleanAuthHashFromUrl();
 }
 
@@ -1093,23 +1096,21 @@ clearDraftEditor();
 syncEntryDateLimit();
 setEntryDateFromOffset(0);
 
-supabase.auth.onAuthStateChange(async (_event, session) => {
-  currentSession = session;
-  currentUser = session?.user ?? null;
+async function handleAuthStateChange(_event, session) {
   cleanAuthHashFromUrl();
-  renderAuthState(currentUser);
-  renderGreeting(currentUser);
-
-  if (currentUser && statusText.textContent === "Bitte melde dich zuerst an.") {
-    setStatus("");
-  }
 
   try {
-    await loadEntries();
+    await applySession(session);
   } catch (error) {
     setStatus(error.message, "error");
   }
-});
+}
 
-showCurrentUser().then(cleanAuthHashFromUrl);
-loadEntries().catch((error) => setStatus(error.message, "error"));
+initializeAuth()
+  .catch((error) => {
+    console.error(error);
+    setStatus(error.message || "Session konnte nicht gelesen werden.", "error");
+  })
+  .finally(() => {
+    supabase.auth.onAuthStateChange(handleAuthStateChange);
+  });
