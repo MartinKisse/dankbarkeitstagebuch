@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Impressum & Datenschutz</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --background: #f7f4ee;
+        --surface: #ffffff;
+        --text: #25211c;
+        --muted: #70685f;
+        --line: #ddd4c7;
+        --accent: #2f7d6d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--background);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+
+      main {
+        width: min(760px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+
+      article {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 28px;
+        background: var(--surface);
+      }
+
+      h1,
+      h2,
+      h3,
+      p,
+      ul {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 28px;
+        font-size: clamp(2rem, 8vw, 3.4rem);
+        line-height: 1.05;
+      }
+
+      h2 {
+        margin: 32px 0 12px;
+        font-size: 1.45rem;
+      }
+
+      h3 {
+        margin: 24px 0 8px;
+        font-size: 1rem;
+      }
+
+      p,
+      li {
+        color: var(--muted);
+      }
+
+      ul {
+        padding-left: 22px;
+      }
+
+      hr {
+        margin: 28px 0;
+        border: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      a {
+        color: var(--accent);
+      }
+
+      .back-link {
+        display: inline-block;
+        margin-bottom: 20px;
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .back-link:hover {
+        text-decoration: underline;
+      }
+
+      @media (max-width: 560px) {
+        main {
+          width: min(100% - 24px, 760px);
+          padding: 24px 0;
+        }
+
+        article {
+          padding: 22px 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back-link" href="/">Zurück zur App</a>
+
+      <article>
+        <h1>Impressum & Datenschutzerklärung</h1>
+
+        <h2>Impressum</h2>
+        <p>Angaben gemäß § 5 TMG:</p>
+        <p>
+          Martin Kisse<br />
+          Hammer Straße 81<br />
+          48153 Münster<br />
+          dankbarkeit.app@gmail.com<br />
+        </p>
+
+        <hr />
+
+        <h2>Datenschutzerklärung</h2>
+
+        <h3>1. Allgemeine Hinweise</h3>
+        <p>
+          Der Schutz deiner persönlichen Daten ist mir wichtig. Diese App verarbeitet personenbezogene Daten ausschließlich im notwendigen Umfang zur Bereitstellung der Funktionalität.
+        </p>
+
+        <h3>2. Verantwortlicher</h3>
+        <p>
+          Martin Kisse<br />
+          Hammer Straße 81<br />
+          48153 Münster<br />
+          dankbarkeit.app@gmail.com
+        </p>
+
+        <h3>3. Datenerfassung</h3>
+        <ul>
+          <li>E-Mail-Adresse (über Google Login)</li>
+          <li>Nutzer-ID</li>
+          <li>Tagebucheinträge (Text)</li>
+          <li>ggf. Audioaufnahmen</li>
+          <li>technische Daten (IP-Adresse, Browser, Zeitpunkt)</li>
+        </ul>
+
+        <h3>4. Zweck der Verarbeitung</h3>
+        <ul>
+          <li>Bereitstellung und Betrieb der App</li>
+          <li>Speicherung und Anzeige von Tagebucheinträgen</li>
+          <li>Sicherstellung der technischen Stabilität und Sicherheit</li>
+        </ul>
+
+        <h3>5. Rechtsgrundlage</h3>
+        <p>
+          Art. 6 Abs. 1 lit. b DSGVO (Vertragserfüllung)<br />
+          Art. 6 Abs. 1 lit. a DSGVO (Einwilligung, z. B. bei optionalen Funktionen)
+        </p>
+
+        <h3>6. Eingesetzte Dienste</h3>
+        <ul>
+          <li>Google Login (OAuth, Anbieter: Google LLC)</li>
+          <li>Supabase (Datenbank)</li>
+          <li>Render (Hosting)</li>
+        </ul>
+
+        <h3>7. Speicherdauer</h3>
+        <p>
+          Die Daten werden gespeichert, solange dein Nutzerkonto besteht oder bis du die Löschung deiner Daten verlangst.
+        </p>
+
+        <h3>8. Deine Rechte</h3>
+        <p>
+          Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit sowie Widerruf einer erteilten Einwilligung. Zudem hast du das Recht, dich bei einer Datenschutzaufsichtsbehörde zu beschweren.
+        </p>
+
+        <h3>9. Kontakt</h3>
+        <p>dankbarkeit.app@gmail.com</p>
+      </article>
+    </main>
+  </body>
+</html>

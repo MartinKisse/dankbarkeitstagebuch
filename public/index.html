@@ -4,6 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Dankbarkeitstagebuch</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#f5f3ef" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -12,6 +17,10 @@
         <button type="button" onclick="loginWithGoogle()">
           Mit Google anmelden
         </button>
+        <p class="legal-hint">
+          Mit dem Login akzeptierst du unsere
+          <a href="/legal.html">Datenschutzbestimmungen</a>.
+        </p>
       </div>
       <section class="intro">
         <div>
@@ -69,6 +78,10 @@
         <div id="entries" class="entries"></div>
       </section>
     </main>
+
+    <footer class="footer">
+      <a href="/legal.html">Impressum & Datenschutz</a>
+    </footer>
 
     <script type="module" src="/app.js"></script>
   </body>

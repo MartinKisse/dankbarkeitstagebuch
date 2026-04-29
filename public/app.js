@@ -124,7 +124,17 @@ function renderAuthState(user) {
     loginButton.type = "button";
     loginButton.textContent = "Mit Google anmelden";
     loginButton.addEventListener("click", loginWithGoogle);
-    authBar.append(loginButton);
+
+    const legalHint = document.createElement("p");
+    legalHint.className = "legal-hint";
+    legalHint.append("Mit dem Login akzeptierst du unsere ");
+
+    const legalLink = document.createElement("a");
+    legalLink.href = "/legal.html";
+    legalLink.textContent = "Datenschutzbestimmungen";
+    legalHint.append(legalLink, ".");
+
+    authBar.append(loginButton, legalHint);
     return;
   }
 
