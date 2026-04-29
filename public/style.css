@@ -70,6 +70,23 @@ input {
   margin-bottom: 32px;
 }
 
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.app-logo {
+  height: clamp(72px, 10vw, 112px);
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.app-header h1 {
+  flex: 1 1 auto;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: var(--accent-dark);
@@ -597,5 +614,15 @@ button:disabled {
   .draft-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 600px) {
+  .app-header {
+    gap: 8px;
+  }
+
+  .app-logo {
+    height: clamp(48px, 16vw, 64px);
   }
 }
