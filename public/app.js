@@ -692,49 +692,90 @@ function getStreakEntryDayKey(entry) {
   return Number.isNaN(date.getTime()) ? "" : getDayKey(date);
 }
 
-function isEntryStreakEligible(entry) {
+function isEntryStreakEligible(entry, todayKey = getTodayInputValue()) {
   if (entry.deleted_at || entry.deletedAt) {
+    // Soft Delete ist eine bewusste Ablage im Papierkorb und zählt deshalb nicht für den Streak.
     return false;
   }
 
   const entryDay = getStreakEntryDayKey(entry);
-  const createdDay = getCreatedAtDayKey(entry.created_at || entry.createdAt);
 
-  if (!entryDay || !createdDay) {
+  if (!entryDay) {
     return false;
   }
 
-  return createdDay >= entryDay && createdDay <= addDaysToDayKey(entryDay, 2);
+  // Reflexion statt Disziplin: Für den Streak zählt der Kalendertag, nicht der genaue Erstellzeitpunkt.
+  return entryDay <= todayKey;
 }
 
-function getEligibleEntryDates(entries) {
-  return new Set(entries.filter(isEntryStreakEligible).map(getStreakEntryDayKey));
+function getEligibleEntryDates(entries, todayKey = getTodayInputValue()) {
+  // Mehrere Einträge am selben Kalendertag werden dedupliziert, weil ein Tag nur einmal zur Folge zählt.
+  return new Set(
+    entries
+      .filter((entry) => isEntryStreakEligible(entry, todayKey))
+      .map(getStreakEntryDayKey)
+      .filter(Boolean),
+  );
 }
 
-function calculateCurrentStreak(entryDates) {
-  const todayKey = getTodayInputValue();
-  const yesterdayKey = addDaysToDayKey(todayKey, -1);
+function calculateConsecutiveDaysEndingAt(entryDates, startDayKey) {
   const dateSet = entryDates instanceof Set ? entryDates : new Set(entryDates);
-
-  let cursor = "";
-  let todayOpen = false;
-
-  if (dateSet.has(todayKey)) {
-    cursor = todayKey;
-  } else if (dateSet.has(yesterdayKey)) {
-    cursor = yesterdayKey;
-    todayOpen = true;
-  } else {
-    return { days: 0, todayOpen: false };
-  }
-
+  let cursor = startDayKey;
   let days = 0;
+
   while (dateSet.has(cursor)) {
     days += 1;
     cursor = addDaysToDayKey(cursor, -1);
   }
 
-  return { days, todayOpen };
+  return days;
+}
+
+function getStreakStatus(entryDates, todayKey = getTodayInputValue()) {
+  const yesterdayKey = addDaysToDayKey(todayKey, -1);
+  const dateSet = entryDates instanceof Set ? entryDates : new Set(entryDates);
+
+  if (dateSet.has(todayKey)) {
+    return {
+      anchorDay: todayKey,
+      status: "active",
+      message: "Heute bereits reflektiert",
+      todayOpen: false,
+    };
+  }
+
+  if (dateSet.has(yesterdayKey)) {
+    return {
+      anchorDay: yesterdayKey,
+      status: "today-open",
+      message: "Heute noch offen",
+      todayOpen: true,
+    };
+  }
+
+  return {
+    anchorDay: "",
+    status: "open",
+    message: "",
+    todayOpen: false,
+  };
+}
+
+function calculateSoftStreak(entries, todayKey = getTodayInputValue()) {
+  const eligibleDates = getEligibleEntryDates(entries, todayKey);
+  // Rückdatierte Dankbarkeitseinträge sind erlaubt und können eine ruhige, ehrliche Serie ergänzen.
+  const statusInfo = getStreakStatus(eligibleDates, todayKey);
+  const currentDays = statusInfo.anchorDay
+    ? calculateConsecutiveDaysEndingAt(eligibleDates, statusInfo.anchorDay)
+    : 0;
+
+  return {
+    currentDays,
+    status: statusInfo.status,
+    statusText: statusInfo.message,
+    todayOpen: statusInfo.todayOpen,
+    longestDays: calculateLongestStreak(eligibleDates),
+  };
 }
 
 function calculateLongestStreak(entryDates) {
@@ -753,13 +794,7 @@ function calculateLongestStreak(entryDates) {
 }
 
 function getStreakInfo(entries) {
-  const eligibleDates = getEligibleEntryDates(entries);
-  const current = calculateCurrentStreak(eligibleDates);
-  return {
-    currentDays: current.days,
-    todayOpen: current.todayOpen,
-    longestDays: calculateLongestStreak(eligibleDates),
-  };
+  return calculateSoftStreak(entries);
 }
 
 function renderStreakSummary(streakInfo) {
@@ -775,17 +810,17 @@ function renderStreakSummary(streakInfo) {
   const infoButton = document.createElement("button");
   infoButton.className = "streak-info-button";
   infoButton.type = "button";
-  infoButton.setAttribute("aria-label", "Dein Streak z\u00e4hlt Tage mit rechtzeitig erstellten Eintr\u00e4gen. Nachtr\u00e4ge z\u00e4hlen bis zu 2 Tage r\u00fcckwirkend.");
+  infoButton.setAttribute("aria-label", "Dein Streak z\u00e4hlt Kalendertage mit mindestens einem nicht gel\u00f6schten Eintrag. R\u00fcckdatierte Dankbarkeitseintr\u00e4ge d\u00fcrfen deine Serie jederzeit erg\u00e4nzen.");
   infoButton.textContent = "\u24d8";
 
   const tooltip = document.createElement("span");
   tooltip.className = "streak-tooltip";
-  tooltip.textContent = "Dein Streak z\u00e4hlt Tage mit rechtzeitig erstellten Eintr\u00e4gen. Nachtr\u00e4ge z\u00e4hlen bis zu 2 Tage r\u00fcckwirkend.";
+  tooltip.textContent = "Dein Streak z\u00e4hlt Kalendertage mit mindestens einem nicht gel\u00f6schten Eintrag. R\u00fcckdatierte Dankbarkeitseintr\u00e4ge d\u00fcrfen deine Serie jederzeit erg\u00e4nzen.";
 
   const text = document.createElement("span");
   text.className = "streak-text";
   if (!streakInfo.currentDays) {
-    text.textContent = "Noch kein Streak - dein erster rechtzeitiger Eintrag startet ihn.";
+    text.textContent = "Noch kein Streak - dein n\u00e4chster Eintrag kann ihn starten.";
     streakSummaryEl.append(text, infoButton, tooltip);
     return;
   }
@@ -793,7 +828,7 @@ function renderStreakSummary(streakInfo) {
   const icon = document.createElement("span");
   icon.className = "streak-icon";
   icon.textContent = "\ud83c\udf31";
-  text.innerHTML = `${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.todayOpen ? "<br>heute noch offen" : ""}`;
+  text.innerHTML = `${streakInfo.currentDays} ${streakInfo.currentDays === 1 ? "Tag" : "Tage"} in Folge${streakInfo.statusText ? `<br>${streakInfo.statusText}` : ""}`;
   streakSummaryEl.append(icon, text, infoButton, tooltip);
 
   if (streakInfo.longestDays > streakInfo.currentDays) {
@@ -954,8 +989,11 @@ function renderEntries(entries) {
 function mapJournalRowToEntry(row) {
   return {
     id: row.id,
+    entry_date: row.entry_date,
     date: row.entry_date || row.created_at,
+    created_at: row.created_at,
     createdAt: row.created_at,
+    deleted_at: row.deleted_at,
     bullets: String(row.content || "").split("\n").filter(Boolean),
     originalText: row.transcript || "",
   };
@@ -3067,13 +3105,8 @@ saveDraftButton.addEventListener("click", async () => {
     const calendarReturnDay = returnToCalendarDayAfterSave;
     returnToCalendarDayAfterSave = null;
     clearDraftEditor();
-    const streakEligible = savedEntry ? isEntryStreakEligible(mapJournalRowToEntry(savedEntry)) : true;
-    setStatus(
-      streakEligible
-        ? "Eintrag gespeichert."
-        : "Eintrag gespeichert. Er z\u00e4hlt aber nicht mehr f\u00fcr deinen Streak.",
-      streakEligible ? "success" : "",
-    );
+    // Keine aggressive Streak-Bestrafung: Speichern bleibt ruhig, die zentrale Streak-Logik berechnet danach neu.
+    setStatus("Eintrag gespeichert.", "success");
 
     if (calendarReturnDay) {
       selectedCalendarDay = calendarReturnDay;
