@@ -369,6 +369,20 @@ app.post("/api/drafts", upload.single("audio"), async (req, res) => {
   }
 });
 
+app.delete("/api/trash", async (req, res) => {
+  try {
+    const entries = await readEntries();
+    const nextEntries = entries.filter((entry) => !(entry?.deleted_at || entry?.deletedAt));
+    const deleted = entries.length - nextEntries.length;
+
+    await writeEntries(nextEntries);
+    res.json({ deleted });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Papierkorb konnte nicht geleert werden." });
+  }
+});
+
 app.delete("/api/entries/:id", async (req, res) => {
   try {
     const entries = await readEntries();

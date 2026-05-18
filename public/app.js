@@ -9,6 +9,7 @@ import {
   softDeleteLocalEntry,
   restoreLocalEntry,
   permanentlyDeleteLocalEntry,
+  permanentlyDeleteLocalTrashEntries,
 } from "./localDb.js";
 const statusText = document.querySelector("#status");
 const greetingEl = document.querySelector("#personal-greeting");
@@ -25,6 +26,7 @@ const calendarPrevButton = document.querySelector("#calendar-prev");
 const calendarNextButton = document.querySelector("#calendar-next");
 const calendarTodayButton = document.querySelector("#calendar-today");
 const trashEntriesContainer = document.querySelector("#trash-entries");
+const emptyTrashButton = document.querySelector("#empty-trash-button");
 const trashBackButton = document.querySelector("#trash-back-button");
 const entriesContainer = document.querySelector("#entries");
 const refreshButton = document.querySelector("#refresh-button");
@@ -1128,6 +1130,23 @@ async function permanentlyDeleteEntryData(id) {
   }
 }
 
+async function permanentlyDeleteTrashEntriesData() {
+  if (isLocalModeActive()) {
+    await permanentlyDeleteLocalTrashEntries();
+    return null;
+  }
+
+  const { error } = await supabase
+    .from("journal_entries")
+    .delete()
+    .eq("user_id", currentUser.id)
+    .not("deleted_at", "is", null);
+
+  if (error) {
+    throw error;
+  }
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -2198,6 +2217,7 @@ function renderDayEntries(dayKey) {
 
 function renderTrashEntries(entries) {
   trashEntriesContainer.innerHTML = "";
+  emptyTrashButton.hidden = !hasJournalAccess() || !entries.length;
 
   if (!hasJournalAccess()) {
     const empty = document.createElement("p");
@@ -2342,6 +2362,26 @@ async function permanentlyDeleteEntry(id) {
   } catch (error) {
     console.error(error);
     setStatus(error.message || "Eintrag konnte nicht endgültig gelöscht werden.", "error");
+  }
+}
+
+async function emptyTrash() {
+  if (!hasJournalAccess()) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return;
+  }
+
+  if (!confirm("Möchtest du wirklich alle Einträge im Papierkorb endgültig löschen? Diese Aktion kann nicht rückgängig gemacht werden.")) {
+    return;
+  }
+
+  try {
+    await permanentlyDeleteTrashEntriesData();
+    setStatus("Papierkorb geleert.", "success");
+    await refreshJournalViews();
+  } catch (error) {
+    console.error(error);
+    setStatus(error.message || "Papierkorb konnte nicht geleert werden.", "error");
   }
 }
 
@@ -3180,6 +3220,8 @@ for (const button of tabButtons) {
 trashBackButton.addEventListener("click", () => {
   switchView("entries");
 });
+
+emptyTrashButton.addEventListener("click", emptyTrash);
 
 calendarPrevButton.addEventListener("click", async () => {
   if (!canGoToPreviousMonth()) {

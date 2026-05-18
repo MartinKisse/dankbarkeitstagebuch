@@ -155,6 +155,21 @@ export async function permanentlyDeleteLocalEntry(id) {
   await runEntryStore("readwrite", (store) => store.delete(id));
 }
 
+export async function permanentlyDeleteLocalTrashEntries() {
+  const rows = await getLocalEntries();
+  const deletedIds = rows.filter((row) => row?.deleted_at).map((row) => row.id);
+
+  if (!deletedIds.length) {
+    return;
+  }
+
+  await runEntryStore("readwrite", (store) => {
+    for (const id of deletedIds) {
+      store.delete(id);
+    }
+  });
+}
+
 export async function bulkImportEntries(entries) {
   const rows = entries.map(normalizeLocalEntry);
   await runEntryStore("readwrite", (store) => {
