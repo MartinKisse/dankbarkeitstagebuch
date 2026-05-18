@@ -1,6 +1,7 @@
 import { supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient.js";
 import {
   createLocalEntry,
+  clearAllEntries,
   getAllEntriesIncludingDeleted,
   getLocalEntries,
   bulkImportEntries,
@@ -56,6 +57,7 @@ const backupImportButton = document.querySelector("#backup-import-button");
 const backupFileInput = document.querySelector("#backup-file-input");
 const backupFeedback = document.querySelector("#backup-feedback");
 const manualEntryButton = document.createElement("button");
+const localMergePrompt = document.createElement("section");
 
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -85,6 +87,8 @@ let returnToCalendarDayAfterSave = null;
 let helpReturnFocusElement = null;
 let hasCompletedInitialAuthLoad = false;
 let storageMode = "local";
+let localMergeDismissedForSession = false;
+let lastLocalMergeFingerprint = "";
 
 const MODE_KEY = "gratitude_mode";
 const LEGACY_DEMO_MODE_KEY = "gratitude_demo_mode";
@@ -93,6 +97,7 @@ const DEMO_MODE_VALUE = "demo";
 const LOCAL_MODE_VALUE = "local";
 const BACKUP_APP_ID = "gratitude_journal";
 const BACKUP_VERSION = 1;
+const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -133,6 +138,12 @@ manualEntryButton.type = "button";
 manualEntryButton.textContent = "\u270d\ufe0f Selbst schreiben";
 recordButton.textContent = "\ud83c\udfa4 Eintrag sprechen";
 recordingControls?.append(manualEntryButton);
+
+localMergePrompt.id = "local-merge-prompt";
+localMergePrompt.className = "local-merge-prompt";
+localMergePrompt.setAttribute("aria-live", "polite");
+localMergePrompt.hidden = true;
+backupPanel.after(localMergePrompt);
 
 async function loginWithGoogle() {
   try {
@@ -392,6 +403,7 @@ async function applySession(session) {
   await loadCalendarBounds();
   await loadEntriesForMonth();
   await loadTrashEntries();
+  await checkLocalMergeOffer();
 
   if (hasJournalAccess() && !hadAccess) {
     switchView("entries");
@@ -1128,10 +1140,14 @@ function normalizeBackupTimestamp(value, fallback) {
   return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
 }
 
-function getBackupSignature(entry) {
+function buildEntrySignature(entry) {
   const dayKey = normalizeBackupDay(entry.entry_date || entry.date || entry.created_at || entry.createdAt);
   const content = normalizeBackupText(getBackupEntryContent(entry)).toLocaleLowerCase("de-DE");
   return dayKey && content ? `${dayKey}|${content}` : "";
+}
+
+function getBackupSignature(entry) {
+  return buildEntrySignature(entry);
 }
 
 function normalizeImportedEntry(entry, { preserveId }) {
@@ -1190,6 +1206,62 @@ function sortBackupEntries(entries) {
   });
 }
 
+function detectDuplicateEntry(entry, existingIds, existingSignatures) {
+  const id = isPlainObject(entry) && entry.id ? String(entry.id) : "";
+  const signature = isPlainObject(entry) ? buildEntrySignature(entry) : "";
+
+  return {
+    id,
+    signature,
+    isDuplicate: Boolean((id && existingIds.has(id)) || (signature && existingSignatures.has(signature))),
+  };
+}
+
+function mergeEntries(sourceEntries, existingEntries, { preserveId = false } = {}) {
+  const existingIds = new Set(existingEntries.map((entry) => String(entry.id || "")).filter(Boolean));
+  const existingSignatures = new Set(existingEntries.map(buildEntrySignature).filter(Boolean));
+  const entriesToInsert = [];
+  let validCount = 0;
+  let duplicateCount = 0;
+  let invalidCount = 0;
+
+  for (const entry of sourceEntries) {
+    const duplicateInfo = detectDuplicateEntry(entry, existingIds, existingSignatures);
+    const normalizedEntry = normalizeImportedEntry(entry, { preserveId });
+
+    if (!normalizedEntry || !duplicateInfo.signature) {
+      invalidCount += 1;
+      continue;
+    }
+
+    validCount += 1;
+
+    if (duplicateInfo.isDuplicate) {
+      duplicateCount += 1;
+      continue;
+    }
+
+    entriesToInsert.push(normalizedEntry);
+
+    if (duplicateInfo.id) {
+      existingIds.add(duplicateInfo.id);
+    }
+    if (normalizedEntry.id) {
+      existingIds.add(String(normalizedEntry.id));
+    }
+    existingSignatures.add(duplicateInfo.signature);
+  }
+
+  return {
+    foundCount: sourceEntries.length,
+    validCount,
+    importedCount: entriesToInsert.length,
+    duplicateCount,
+    invalidCount,
+    entriesToInsert,
+  };
+}
+
 async function getAllCloudEntriesIncludingDeleted() {
   if (!currentUser || !currentSession?.access_token) {
     return [];
@@ -1232,7 +1304,6 @@ async function insertImportedCloudEntries(entries) {
     content: entry.content,
     transcript: entry.transcript,
     created_at: entry.created_at,
-    updated_at: entry.updated_at,
     deleted_at: entry.deleted_at,
   }));
 
@@ -1246,6 +1317,113 @@ async function insertImportedCloudEntries(entries) {
   }
 
   return data || [];
+}
+
+function buildCloudImportRow(entry) {
+  const row = {
+    user_id: currentUser.id,
+    entry_date: entry.entry_date,
+    content: entry.content,
+    transcript: entry.transcript,
+  };
+
+  if (entry.deleted_at) {
+    row.deleted_at = entry.deleted_at;
+  }
+
+  return row;
+}
+
+function formatSupabaseInsertError(error) {
+  if (!error) {
+    return "Unbekannter Supabase-Fehler";
+  }
+
+  const parts = [
+    error.message,
+    error.details,
+    error.hint,
+    error.code ? `Code: ${error.code}` : "",
+  ].filter(Boolean);
+
+  return parts.join(" ");
+}
+
+async function parseSupabaseInsertResponse(response) {
+  const responseText = await response.text();
+
+  if (response.ok) {
+    return responseText ? JSON.parse(responseText) : [];
+  }
+
+  try {
+    const parsed = JSON.parse(responseText);
+    return {
+      error: formatSupabaseInsertError(parsed),
+    };
+  } catch {
+    return {
+      error: responseText || `HTTP ${response.status}`,
+    };
+  }
+}
+
+async function insertLocalMergeCloudEntries(entries) {
+  if (!entries.length) {
+    return {
+      insertedEntries: [],
+      failedEntries: [],
+      errors: [],
+    };
+  }
+
+  if (!currentUser || !currentSession?.access_token) {
+    throw new Error("Bitte melde dich zuerst an.");
+  }
+
+  const insertedEntries = [];
+  const failedEntries = [];
+  const errors = [];
+
+  for (const entry of entries) {
+    const row = buildCloudImportRow(entry);
+
+    if (!row.entry_date || !row.content) {
+      failedEntries.push(entry);
+      errors.push("Ein lokaler Eintrag hat kein g\u00fcltiges Datum oder keinen Inhalt.");
+      continue;
+    }
+
+    const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": supabaseAnonKey,
+        "Authorization": `Bearer ${currentSession.access_token}`,
+        "Prefer": "return=representation",
+      },
+      body: JSON.stringify(row),
+    });
+    const result = await parseSupabaseInsertResponse(response);
+
+    if (result.error) {
+      const message = `Supabase INSERT failed: ${result.error}`;
+      console.error("merge upload failed", result.error, { row, status: response.status });
+      failedEntries.push(entry);
+      errors.push(message);
+      continue;
+    }
+
+    if (Array.isArray(result)) {
+      insertedEntries.push(...result);
+    }
+  }
+
+  return {
+    insertedEntries,
+    failedEntries,
+    errors,
+  };
 }
 
 async function insertImportedEntries(entries) {
@@ -1384,6 +1562,265 @@ function renderBackupImportError(message) {
   });
 }
 
+function getLocalMergeDoneKey() {
+  return `${LOCAL_MERGE_DONE_KEY_PREFIX}:${currentUser?.id || "anonymous"}`;
+}
+
+function getLocalEntriesFingerprint(entries) {
+  return sortBackupEntries(entries)
+    .map((entry) => [
+      String(entry.id || ""),
+      buildEntrySignature(entry),
+      normalizeBackupTimestamp(entry.deleted_at || entry.deletedAt, "") || "",
+    ].join("|"))
+    .join("||");
+}
+
+function hasMergedLocalEntries(fingerprint) {
+  return Boolean(fingerprint && localStorage.getItem(getLocalMergeDoneKey()) === fingerprint);
+}
+
+function rememberMergedLocalEntries(fingerprint) {
+  if (fingerprint) {
+    localStorage.setItem(getLocalMergeDoneKey(), fingerprint);
+  }
+}
+
+function hideLocalMergePrompt() {
+  localMergePrompt.replaceChildren();
+  localMergePrompt.hidden = true;
+}
+
+function renderLocalMergeFeedback({ type = "success", title = "", items = [], message = "", actions = [] } = {}) {
+  localMergePrompt.replaceChildren();
+  localMergePrompt.className = `local-merge-prompt backup-import-result is-${type}`;
+
+  if (title) {
+    const heading = document.createElement("h3");
+    heading.className = "backup-import-title";
+    heading.textContent = title;
+    localMergePrompt.append(heading);
+  }
+
+  if (message) {
+    const paragraph = document.createElement("p");
+    paragraph.className = "backup-import-message";
+    paragraph.textContent = message;
+    localMergePrompt.append(paragraph);
+  }
+
+  if (items.length) {
+    const list = document.createElement("ul");
+    list.className = "backup-import-list";
+
+    for (const itemText of items) {
+      const item = document.createElement("li");
+      item.textContent = itemText;
+      list.append(item);
+    }
+
+    localMergePrompt.append(list);
+  }
+
+  if (actions.length) {
+    const actionRow = document.createElement("div");
+    actionRow.className = "local-merge-actions";
+
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = action.label;
+      if (action.secondary) {
+        button.className = "secondary-button";
+      }
+      button.addEventListener("click", action.onClick);
+      actionRow.append(button);
+    }
+
+    localMergePrompt.append(actionRow);
+  }
+
+  localMergePrompt.hidden = false;
+}
+
+function renderLocalMergePrompt(localCount) {
+  localMergePrompt.replaceChildren();
+  localMergePrompt.className = "local-merge-prompt backup-import-result is-warning";
+
+  const heading = document.createElement("h3");
+  heading.className = "backup-import-title";
+  heading.textContent = "Lokale Eintr\u00e4ge gefunden";
+
+  const message = document.createElement("p");
+  message.className = "backup-import-message";
+  message.textContent = `Du hast ${localCount} lokale Eintr\u00e4ge auf diesem Ger\u00e4t. M\u00f6chtest du sie in dein Konto \u00fcbernehmen?`;
+
+  const actions = document.createElement("div");
+  actions.className = "local-merge-actions";
+
+  const mergeButton = document.createElement("button");
+  mergeButton.type = "button";
+  mergeButton.textContent = "Ins Konto \u00fcbernehmen";
+  mergeButton.addEventListener("click", mergeLocalEntriesIntoAccount);
+
+  const laterButton = document.createElement("button");
+  laterButton.className = "secondary-button";
+  laterButton.type = "button";
+  laterButton.textContent = "Sp\u00e4ter";
+  laterButton.addEventListener("click", () => {
+    localMergeDismissedForSession = true;
+    hideLocalMergePrompt();
+  });
+
+  actions.append(mergeButton, laterButton);
+  localMergePrompt.append(heading, message, actions);
+  localMergePrompt.hidden = false;
+}
+
+function renderLocalMergeResult(mergeResult, uploadErrors = []) {
+  const title = mergeResult.importedCount > 0
+    ? "Lokale Eintr\u00e4ge \u00fcbernommen"
+    : "Lokale Eintr\u00e4ge \u00fcberpr\u00fcft";
+  const hasUploadErrors = uploadErrors.length > 0;
+  const items = [
+    `${mergeResult.foundCount} lokale Eintr\u00e4ge gefunden`,
+    `${mergeResult.importedCount} neue Eintr\u00e4ge \u00fcbernommen`,
+    `${mergeResult.duplicateCount} Duplikate \u00fcbersprungen`,
+    `${mergeResult.invalidCount} ung\u00fcltige Eintr\u00e4ge \u00fcbersprungen`,
+  ];
+
+  if (hasUploadErrors) {
+    items.push(`Technischer Fehler: ${uploadErrors[0]}`);
+  }
+
+  renderLocalMergeFeedback({
+    type: mergeResult.invalidCount > 0 || hasUploadErrors ? "warning" : "success",
+    title,
+    message: hasUploadErrors
+      ? "Einige lokale Eintr\u00e4ge konnten nicht \u00fcbernommen werden. M\u00f6chtest du die lokale Kopie auf diesem Ger\u00e4t behalten?"
+      : "Die lokalen Eintr\u00e4ge wurden erfolgreich in dein Konto \u00fcbernommen. M\u00f6chtest du die lokale Kopie auf diesem Ger\u00e4t behalten?",
+    items,
+    actions: [
+      {
+        label: "Lokale Kopie behalten",
+        secondary: true,
+        onClick: () => {
+          hideLocalMergePrompt();
+          setStatus("Lokale Kopie bleibt auf diesem Ger\u00e4t erhalten.", "success");
+        },
+      },
+      {
+        label: "Lokale Kopie l\u00f6schen",
+        onClick: clearMergedLocalCopy,
+      },
+    ],
+  });
+}
+
+async function checkLocalMergeOffer() {
+  if (isLocalModeActive() || !currentUser || !currentSession?.access_token) {
+    hideLocalMergePrompt();
+    return;
+  }
+
+  if (localMergeDismissedForSession) {
+    return;
+  }
+
+  try {
+    const localEntries = await getAllEntriesIncludingDeleted();
+    const usableLocalEntries = localEntries.filter((entry) => isPlainObject(entry));
+
+    if (!usableLocalEntries.length) {
+      hideLocalMergePrompt();
+      return;
+    }
+
+    const fingerprint = getLocalEntriesFingerprint(usableLocalEntries);
+    lastLocalMergeFingerprint = fingerprint;
+
+    if (hasMergedLocalEntries(fingerprint)) {
+      hideLocalMergePrompt();
+      return;
+    }
+
+    renderLocalMergePrompt(usableLocalEntries.length);
+  } catch (error) {
+    console.error(error);
+    renderLocalMergeFeedback({
+      type: "error",
+      title: "Lokale Eintr\u00e4ge konnten nicht gepr\u00fcft werden",
+      message: error.message || "IndexedDB konnte nicht gelesen werden.",
+    });
+  }
+}
+
+async function mergeLocalEntriesIntoAccount() {
+  if (!currentUser || !currentSession?.access_token || isLocalModeActive()) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return;
+  }
+
+  renderLocalMergeFeedback({
+    type: "loading",
+    title: "Lokale Eintr\u00e4ge werden gepr\u00fcft ...",
+  });
+
+  try {
+    const localEntries = (await getAllEntriesIncludingDeleted()).filter((entry) => isPlainObject(entry));
+    const existingEntries = await getAllCloudEntriesIncludingDeleted();
+    const mergeResult = mergeEntries(localEntries, existingEntries, { preserveId: false });
+    const uploadResult = await insertLocalMergeCloudEntries(mergeResult.entriesToInsert);
+
+    mergeResult.importedCount = uploadResult.insertedEntries.length;
+    mergeResult.invalidCount += uploadResult.failedEntries.length;
+    await refreshJournalViews();
+
+    lastLocalMergeFingerprint = getLocalEntriesFingerprint(localEntries);
+    if (!uploadResult.failedEntries.length) {
+      rememberMergedLocalEntries(lastLocalMergeFingerprint);
+    }
+    localMergeDismissedForSession = false;
+    renderLocalMergeResult(mergeResult, uploadResult.errors);
+    setStatus(
+      uploadResult.failedEntries.length
+        ? "Lokale Eintr\u00e4ge teilweise \u00fcbernommen."
+        : "Lokale Eintr\u00e4ge gepr\u00fcft.",
+      uploadResult.failedEntries.length ? "warning" : "success",
+    );
+  } catch (error) {
+    console.error(error);
+    renderLocalMergeFeedback({
+      type: "error",
+      title: "Lokale Eintr\u00e4ge konnten nicht \u00fcbernommen werden",
+      message: error.message || "Merge technisch fehlgeschlagen.",
+    });
+    setStatus(error.message || "Lokale Eintr\u00e4ge konnten nicht \u00fcbernommen werden.", "error");
+  }
+}
+
+async function clearMergedLocalCopy() {
+  try {
+    await clearAllEntries();
+    rememberMergedLocalEntries(lastLocalMergeFingerprint);
+    await refreshJournalViews();
+    renderLocalMergeFeedback({
+      type: "success",
+      title: "Lokale Kopie gel\u00f6scht",
+      message: "Die lokale Kopie auf diesem Ger\u00e4t wurde gel\u00f6scht.",
+    });
+    setStatus("Lokale Kopie gel\u00f6scht.", "success");
+  } catch (error) {
+    console.error(error);
+    renderLocalMergeFeedback({
+      type: "error",
+      title: "Lokale Kopie konnte nicht gel\u00f6scht werden",
+      message: error.message || "IndexedDB konnte nicht geleert werden.",
+    });
+    setStatus(error.message || "Lokale Kopie konnte nicht gel\u00f6scht werden.", "error");
+  }
+}
+
 async function importBackupFile(file) {
   try {
     if (!file) {
@@ -1415,50 +1852,17 @@ async function importBackupFile(file) {
 
     const foundCount = payload.entries.length;
     const existingEntries = await getAllEntriesForBackup();
-    const existingIds = new Set(existingEntries.map((entry) => String(entry.id || "")).filter(Boolean));
-    const existingSignatures = new Set(existingEntries.map(getBackupSignature).filter(Boolean));
-    const rowsToImport = [];
-    let validCount = 0;
-    let duplicateCount = 0;
-    let invalidCount = 0;
+    const mergeResult = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
 
-    for (const entry of payload.entries) {
-      const signature = isPlainObject(entry) ? getBackupSignature(entry) : "";
-      const id = isPlainObject(entry) && entry.id ? String(entry.id) : "";
-      const normalizedEntry = normalizeImportedEntry(entry, { preserveId: isLocalModeActive() });
-
-      if (!normalizedEntry || !signature) {
-        invalidCount += 1;
-        continue;
-      }
-
-      validCount += 1;
-
-      if ((id && existingIds.has(id)) || existingSignatures.has(signature)) {
-        duplicateCount += 1;
-        continue;
-      }
-
-      rowsToImport.push(normalizedEntry);
-
-      if (id) {
-        existingIds.add(id);
-      }
-      if (normalizedEntry.id) {
-        existingIds.add(String(normalizedEntry.id));
-      }
-      existingSignatures.add(signature);
-    }
-
-    await insertImportedEntries(rowsToImport);
+    await insertImportedEntries(mergeResult.entriesToInsert);
     await refreshJournalViews();
     renderBackupImportSuccess({
       foundCount,
-      validCount,
-      importedCount: rowsToImport.length,
-      duplicateCount,
-      invalidCount,
-      type: invalidCount > 0 ? "warning" : "success",
+      validCount: mergeResult.validCount,
+      importedCount: mergeResult.importedCount,
+      duplicateCount: mergeResult.duplicateCount,
+      invalidCount: mergeResult.invalidCount,
+      type: mergeResult.invalidCount > 0 ? "warning" : "success",
     });
     setStatus("Import abgeschlossen.", "success");
   } catch (error) {

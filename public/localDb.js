@@ -106,6 +106,10 @@ export async function getAllEntriesIncludingDeleted() {
   return getLocalEntries();
 }
 
+export async function clearAllEntries() {
+  await runEntryStore("readwrite", (store) => store.clear());
+}
+
 export async function getLocalEntryById(id) {
   return runEntryStore("readonly", (store) => store.get(id));
 }
