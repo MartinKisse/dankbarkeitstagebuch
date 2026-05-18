@@ -1,4 +1,12 @@
 import { supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient.js";
+import {
+  createLocalEntry,
+  getLocalEntries,
+  updateLocalEntry,
+  softDeleteLocalEntry,
+  restoreLocalEntry,
+  permanentlyDeleteLocalEntry,
+} from "./localDb.js";
 const statusText = document.querySelector("#status");
 const greetingEl = document.querySelector("#personal-greeting");
 const streakSummaryEl = document.querySelector("#streak-summary");
@@ -67,11 +75,13 @@ let minCalendarMonth = null;
 let returnToCalendarDayAfterSave = null;
 let helpReturnFocusElement = null;
 let hasCompletedInitialAuthLoad = false;
+let storageMode = "local";
 
 const MODE_KEY = "gratitude_mode";
 const LEGACY_DEMO_MODE_KEY = "gratitude_demo_mode";
 const DEMO_ENTRIES_KEY = "gratitude_demo_entries";
 const DEMO_MODE_VALUE = "demo";
+const LOCAL_MODE_VALUE = "local";
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -138,6 +148,10 @@ function isDemoModeActive() {
   return localStorage.getItem(MODE_KEY) === DEMO_MODE_VALUE;
 }
 
+function isLocalModeActive() {
+  return storageMode === LOCAL_MODE_VALUE || isDemoModeActive();
+}
+
 function hasAuthCallback() {
   return (
     window.location.hash.includes("access_token=") ||
@@ -147,8 +161,9 @@ function hasAuthCallback() {
 }
 
 function enableDemoMode() {
-  localStorage.setItem(MODE_KEY, DEMO_MODE_VALUE);
+  localStorage.setItem(MODE_KEY, LOCAL_MODE_VALUE);
   localStorage.removeItem(LEGACY_DEMO_MODE_KEY);
+  storageMode = LOCAL_MODE_VALUE;
 }
 
 function ensureDefaultDemoMode() {
@@ -163,7 +178,7 @@ function ensureDefaultDemoMode() {
 }
 
 function hasJournalAccess() {
-  return isDemoModeActive() || Boolean(currentUser && currentSession?.access_token);
+  return isLocalModeActive() || Boolean(currentUser && currentSession?.access_token);
 }
 
 function readDemoRows() {
@@ -187,6 +202,7 @@ function createLocalId() {
 function disableDemoMode() {
   localStorage.removeItem(MODE_KEY);
   localStorage.removeItem(LEGACY_DEMO_MODE_KEY);
+  storageMode = "cloud";
 }
 
 async function startDemoMode() {
@@ -195,7 +211,7 @@ async function startDemoMode() {
   currentUser = null;
   cleanAuthHashFromUrl();
   await applySession(null);
-  setStatus("Testmodus aktiv.", "success");
+  setStatus("Lokaler Modus aktiv.", "success");
 }
 
 async function useRealAccount() {
@@ -204,13 +220,13 @@ async function useRealAccount() {
 }
 
 async function clearDemoEntries() {
-  if (!confirm("Lokale Testdaten wirklich l\u00f6schen?")) {
+  if (!confirm("Lokale Eintr\u00e4ge wirklich l\u00f6schen?")) {
     return;
   }
 
   localStorage.removeItem(DEMO_ENTRIES_KEY);
   await refreshJournalViews();
-  setStatus("Lokale Testdaten gel\u00f6scht.", "success");
+  setStatus("Lokale Eintr\u00e4ge gel\u00f6scht.", "success");
 }
 
 function cleanAuthHashFromUrl() {
@@ -238,7 +254,7 @@ async function logout() {
     cleanAuthHashFromUrl();
     enableDemoMode();
     await applySession(null);
-    setStatus("Ausgeloggt. Testmodus aktiv.", "success");
+    setStatus("Ausgeloggt. Lokaler Modus aktiv.", "success");
   } catch (error) {
     console.error(error);
     setStatus("Logout fehlgeschlagen.", "error");
@@ -249,7 +265,7 @@ function renderDemoBanner() {
   document.querySelector(".test-banner")?.remove();
   document.querySelector(".demo-mode-banner")?.remove();
 
-  if (!isDemoModeActive()) {
+  if (!isLocalModeActive()) {
     document.body.classList.remove("has-test-banner");
     return;
   }
@@ -259,7 +275,7 @@ function renderDemoBanner() {
   banner.className = "test-banner";
 
   const message = document.createElement("p");
-  message.textContent = "\u26a0\ufe0f Testversion";
+  message.textContent = "Lokaler Modus: Deine Eintr\u00e4ge werden nur auf diesem Ger\u00e4t gespeichert.";
 
   const actions = document.createElement("div");
   actions.className = "test-banner-actions";
@@ -278,7 +294,17 @@ function renderAuthState(user) {
   authBar.innerHTML = "";
   renderDemoBanner();
 
-  if (isDemoModeActive()) {
+  if (isLocalModeActive()) {
+    const accountButton = document.createElement("button");
+    accountButton.type = "button";
+    accountButton.textContent = "Mit Google anmelden";
+    accountButton.addEventListener("click", useRealAccount);
+
+    const localHint = document.createElement("p");
+    localHint.className = "demo-mode-hint";
+    localHint.textContent = "Wenn du Browserdaten l\u00f6schst oder das Ger\u00e4t wechselst, k\u00f6nnen lokale Eintr\u00e4ge verloren gehen.";
+
+    authBar.append(accountButton, localHint);
     return;
   }
 
@@ -291,12 +317,12 @@ function renderAuthState(user) {
     const demoButton = document.createElement("button");
     demoButton.className = "secondary-button";
     demoButton.type = "button";
-    demoButton.textContent = "Ohne Login testen";
+    demoButton.textContent = "Ohne Login nutzen";
     demoButton.addEventListener("click", startDemoMode);
 
     const demoHint = document.createElement("p");
     demoHint.className = "demo-mode-hint";
-    demoHint.textContent = "Im Testmodus werden deine Eintr\u00e4ge nur in diesem Browser gespeichert. Es wird kein Konto erstellt und nichts in der Datenbank gespeichert.";
+    demoHint.textContent = "Lokaler Modus: Deine Eintr\u00e4ge werden nur auf diesem Ger\u00e4t gespeichert.";
 
     const legalHint = document.createElement("p");
     legalHint.className = "legal-hint";
@@ -716,7 +742,7 @@ function getStreakInfo(entries) {
 function renderStreakSummary(streakInfo) {
   streakSummaryEl.innerHTML = "";
 
-  if (!currentUser || isDemoModeActive()) {
+  if (!hasJournalAccess()) {
     streakSummaryEl.hidden = true;
     return;
   }
@@ -941,19 +967,28 @@ function getDemoRowsForMonth() {
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 }
 
+async function getVisibleLocalRows() {
+  return (await getLocalEntries())
+    .filter((row) => !row.deleted_at)
+    .filter((row) => row.entry_date || row.created_at);
+}
+
+async function getDeletedLocalRows() {
+  return (await getLocalEntries())
+    .filter((row) => row.deleted_at)
+    .sort((a, b) => new Date(b.deleted_at) - new Date(a.deleted_at));
+}
+
+async function getLocalRowsForMonth() {
+  const { startKey, endKey } = getMonthBounds(calendarMonth);
+  return (await getVisibleLocalRows())
+    .filter((row) => row.entry_date >= startKey && row.entry_date <= endKey)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+}
+
 async function createEntry(entry) {
-  if (isDemoModeActive()) {
-    const now = new Date().toISOString();
-    const row = {
-      id: createLocalId(),
-      entry_date: entry.entry_date,
-      created_at: now,
-      content: entry.content,
-      transcript: entry.transcript || "",
-      deleted_at: null,
-    };
-    writeDemoRows([row, ...readDemoRows()]);
-    return row;
+  if (isLocalModeActive()) {
+    return createLocalEntry(entry);
   }
 
   const response = await fetch(`${supabaseUrl}/rest/v1/journal_entries`, {
@@ -981,20 +1016,8 @@ async function createEntry(entry) {
 }
 
 async function updateEntry(id, patch) {
-  if (isDemoModeActive()) {
-    const rows = readDemoRows();
-    const index = rows.findIndex((row) => row.id === id);
-    if (index === -1) {
-      throw new Error("Eintrag wurde nicht gefunden.");
-    }
-
-    rows[index] = {
-      ...rows[index],
-      ...patch,
-      updated_at: new Date().toISOString(),
-    };
-    writeDemoRows(rows);
-    return rows[index];
+  if (isLocalModeActive()) {
+    return updateLocalEntry(id, patch);
   }
 
   const { error } = await supabase
@@ -1011,17 +1034,25 @@ async function updateEntry(id, patch) {
 }
 
 async function softDeleteEntry(id) {
+  if (isLocalModeActive()) {
+    return softDeleteLocalEntry(id);
+  }
+
   return updateEntry(id, { deleted_at: new Date().toISOString() });
 }
 
 async function restoreEntryData(id) {
+  if (isLocalModeActive()) {
+    return restoreLocalEntry(id);
+  }
+
   return updateEntry(id, { deleted_at: null });
 }
 
 async function permanentlyDeleteEntryData(id) {
-  if (isDemoModeActive()) {
-    writeDemoRows(readDemoRows().filter((row) => row.id !== id || !row.deleted_at));
-    return;
+  if (isLocalModeActive()) {
+    await permanentlyDeleteLocalEntry(id);
+    return null;
   }
 
   const { error } = await supabase
@@ -1037,8 +1068,8 @@ async function permanentlyDeleteEntryData(id) {
 }
 
 async function loadEntries() {
-  if (isDemoModeActive()) {
-    const entries = getVisibleDemoRows().map(mapJournalRowToEntry);
+  if (isLocalModeActive()) {
+    const entries = (await getVisibleLocalRows()).map(mapJournalRowToEntry);
     renderEntries(entries);
     renderStreakSummary(getStreakInfo(entries));
     return;
@@ -1077,8 +1108,8 @@ async function loadEntries() {
 }
 
 async function loadCalendarBounds() {
-  if (isDemoModeActive()) {
-    const rows = getVisibleDemoRows().sort((a, b) => new Date(a.entry_date || a.created_at) - new Date(b.entry_date || b.created_at));
+  if (isLocalModeActive()) {
+    const rows = (await getVisibleLocalRows()).sort((a, b) => new Date(a.entry_date || a.created_at) - new Date(b.entry_date || b.created_at));
     if (!rows.length) {
       minCalendarMonth = getMaxCalendarMonth();
       calendarMonth = getMaxCalendarMonth();
@@ -1134,9 +1165,9 @@ async function loadCalendarBounds() {
 }
 
 async function loadEntriesForMonth() {
-  if (isDemoModeActive()) {
+  if (isLocalModeActive()) {
     clampCalendarMonth();
-    calendarEntriesByDay = groupCalendarEntries(getDemoRowsForMonth());
+    calendarEntriesByDay = groupCalendarEntries(await getLocalRowsForMonth());
     renderCalendar();
     renderDayEntries(selectedCalendarDay);
     return;
@@ -1386,8 +1417,8 @@ function renderTrashEntries(entries) {
 }
 
 async function loadTrashEntries() {
-  if (isDemoModeActive()) {
-    renderTrashEntries(getDeletedDemoRows());
+  if (isLocalModeActive()) {
+    renderTrashEntries(await getDeletedLocalRows());
     return;
   }
 
@@ -2346,6 +2377,8 @@ async function handleAuthStateChange(_event, session) {
   try {
     if (session) {
       disableDemoMode();
+    } else {
+      enableDemoMode();
     }
 
     await applySession(session);

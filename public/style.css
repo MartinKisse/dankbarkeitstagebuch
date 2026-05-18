@@ -85,9 +85,9 @@ input {
   height: 48px;
   padding: 0 10px;
   overflow: hidden;
-  background: #c0392b;
+  background: var(--accent-dark);
   color: #fff;
-  box-shadow: 0 6px 16px rgba(80, 12, 20, 0.18);
+  box-shadow: 0 6px 16px rgba(33, 95, 84, 0.18);
   font-size: 13px;
 }
 
@@ -116,13 +116,13 @@ input {
   border-radius: 8px;
   padding: 0 10px;
   background: #fff;
-  color: #c0392b;
+  color: var(--accent-dark);
   font-size: 13px;
   white-space: nowrap;
 }
 
 .test-banner button:hover {
-  background: #ffe8eb;
+  background: #e8f4ef;
 }
 
 body.has-test-banner {
