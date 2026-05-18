@@ -296,8 +296,35 @@ function renderDemoBanner() {
   const banner = document.createElement("div");
   banner.className = "test-banner";
 
+  const messageGroup = document.createElement("div");
+  messageGroup.className = "test-banner-message";
+
   const message = document.createElement("p");
-  message.textContent = "Lokaler Modus: Deine Eintr\u00e4ge werden nur auf diesem Ger\u00e4t gespeichert.";
+  message.textContent = "Lokaler Modus: Deine Eintr\u00e4ge werden nur in diesem Browser gespeichert. Erstelle regelm\u00e4\u00dfig ein Backup, damit nichts verloren geht.";
+
+  const helpGroup = document.createElement("span");
+  helpGroup.className = "test-banner-help-group";
+
+  const helpButton = document.createElement("button");
+  helpButton.className = "test-banner-help-button";
+  helpButton.type = "button";
+  helpButton.setAttribute("aria-label", "Lokalen Modus erkl\u00e4ren");
+  helpButton.setAttribute("aria-expanded", "false");
+  helpButton.setAttribute("aria-controls", "local-mode-help");
+  helpButton.textContent = "?";
+
+  const helpPopover = document.createElement("span");
+  helpPopover.id = "local-mode-help";
+  helpPopover.className = "test-banner-help-popover";
+  helpPopover.setAttribute("role", "status");
+  helpPopover.hidden = true;
+  helpPopover.textContent = "Im lokalen Modus werden deine Eintr\u00e4ge nur in diesem Browser auf diesem Ger\u00e4t gespeichert. Wenn du Browserdaten l\u00f6schst, einen anderen Browser nutzt oder das Ger\u00e4t wechselst, sind sie dort nicht verf\u00fcgbar. Mit einem Backup kannst du sie sp\u00e4ter wieder importieren.";
+
+  helpButton.addEventListener("click", () => {
+    const isOpen = !helpPopover.hidden;
+    helpPopover.hidden = isOpen;
+    helpButton.setAttribute("aria-expanded", String(!isOpen));
+  });
 
   const actions = document.createElement("div");
   actions.className = "test-banner-actions";
@@ -307,9 +334,23 @@ function renderDemoBanner() {
   accountButton.textContent = "Mit Google anmelden";
   accountButton.addEventListener("click", useRealAccount);
 
+  helpGroup.append(helpButton, helpPopover);
+  messageGroup.append(message, helpGroup);
   actions.append(accountButton);
-  banner.append(message, actions);
-  document.body.prepend(banner);
+  banner.append(messageGroup, actions);
+  document.querySelector(".app-shell")?.prepend(banner);
+}
+
+function closeLocalModeHelp() {
+  const helpPopover = document.querySelector("#local-mode-help");
+  const helpButton = document.querySelector(".test-banner-help-button");
+
+  if (!helpPopover || helpPopover.hidden) {
+    return;
+  }
+
+  helpPopover.hidden = true;
+  helpButton?.setAttribute("aria-expanded", "false");
 }
 
 function renderAuthState(user) {
@@ -317,16 +358,6 @@ function renderAuthState(user) {
   renderDemoBanner();
 
   if (isLocalModeActive()) {
-    const accountButton = document.createElement("button");
-    accountButton.type = "button";
-    accountButton.textContent = "Mit Google anmelden";
-    accountButton.addEventListener("click", useRealAccount);
-
-    const localHint = document.createElement("p");
-    localHint.className = "demo-mode-hint";
-    localHint.textContent = "Wenn du Browserdaten l\u00f6schst oder das Ger\u00e4t wechselst, k\u00f6nnen lokale Eintr\u00e4ge verloren gehen.";
-
-    authBar.append(accountButton, localHint);
     return;
   }
 
@@ -3093,6 +3124,11 @@ helpModal.addEventListener("click", (event) => {
   }
 });
 document.addEventListener("keydown", handleHelpModalKeydown);
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".test-banner-help-group")) {
+    closeLocalModeHelp();
+  }
+});
 backupExportButton.addEventListener("click", exportBackup);
 backupImportButton.addEventListener("click", () => backupFileInput.click());
 backupFileInput.addEventListener("change", async () => {
