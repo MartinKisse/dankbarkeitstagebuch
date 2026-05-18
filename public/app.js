@@ -19,6 +19,7 @@ const tabButtons = document.querySelectorAll(".tab-button");
 const entriesView = document.querySelector("#entries-view");
 const calendarView = document.querySelector("#calendar-view");
 const trashView = document.querySelector("#trash-view");
+const dataView = document.querySelector("#data-view");
 const calendarGrid = document.querySelector("#calendar-grid");
 const calendarMonthLabel = document.querySelector("#calendar-month-label");
 const calendarDayEntries = document.querySelector("#calendar-day-entries");
@@ -51,9 +52,6 @@ const recordingControls = document.querySelector(".recording-controls");
 const helpButton = document.querySelector("#help-button");
 const helpModal = document.querySelector("#help-modal");
 const helpCloseButton = document.querySelector("#help-close-button");
-const backupToggleButton = document.querySelector("#backup-toggle-button");
-const backupPanel = document.querySelector("#backup-panel");
-const backupCloseButton = document.querySelector("#backup-close-button");
 const backupExportButton = document.querySelector("#backup-export-button");
 const backupImportButton = document.querySelector("#backup-import-button");
 const backupFileInput = document.querySelector("#backup-file-input");
@@ -80,7 +78,7 @@ let currentDraft = null;
 let savedDraftFingerprint = "";
 let currentSession = null;
 let currentUser = null;
-let currentView = "entries";
+let activeTab = "entries";
 let calendarMonth = new Date();
 let calendarEntriesByDay = new Map();
 let selectedCalendarDay = getDayKey(new Date());
@@ -145,7 +143,7 @@ localMergePrompt.id = "local-merge-prompt";
 localMergePrompt.className = "local-merge-prompt";
 localMergePrompt.setAttribute("aria-live", "polite");
 localMergePrompt.hidden = true;
-backupPanel.after(localMergePrompt);
+dataView.after(localMergePrompt);
 
 async function loginWithGoogle() {
   try {
@@ -514,17 +512,32 @@ function handleHelpModalKeydown(event) {
   }
 }
 
-function switchView(viewName) {
-  currentView = viewName;
-  entriesView.hidden = viewName !== "entries";
-  calendarView.hidden = viewName !== "calendar";
-  trashView.hidden = viewName !== "trash";
+const appViews = {
+  entries: entriesView,
+  calendar: calendarView,
+  trash: trashView,
+  data: dataView,
+};
+
+function renderActiveView() {
+  for (const [viewName, view] of Object.entries(appViews)) {
+    view.hidden = viewName !== activeTab;
+  }
 
   for (const button of tabButtons) {
-    const isActive = button.dataset.view === viewName;
+    const isActive = button.dataset.view === activeTab;
     button.classList.toggle("is-active", isActive);
     button.setAttribute("aria-selected", String(isActive));
   }
+}
+
+function switchView(viewName) {
+  if (!appViews[viewName]) {
+    return;
+  }
+
+  activeTab = viewName;
+  renderActiveView();
 
   if (viewName === "calendar") {
     renderCalendar();
@@ -1934,18 +1947,6 @@ async function importBackupFile(file) {
   }
 }
 
-function toggleBackupPanel(forceOpen) {
-  const shouldOpen = typeof forceOpen === "boolean" ? forceOpen : backupPanel.hidden;
-  backupPanel.hidden = !shouldOpen;
-  backupToggleButton.setAttribute("aria-expanded", String(shouldOpen));
-
-  if (shouldOpen) {
-    backupExportButton.focus();
-  } else {
-    clearBackupFeedback();
-  }
-}
-
 async function loadEntries() {
   if (isLocalModeActive()) {
     const entries = (await getVisibleLocalRows()).map(mapJournalRowToEntry);
@@ -3092,8 +3093,6 @@ helpModal.addEventListener("click", (event) => {
   }
 });
 document.addEventListener("keydown", handleHelpModalKeydown);
-backupToggleButton.addEventListener("click", () => toggleBackupPanel());
-backupCloseButton.addEventListener("click", () => toggleBackupPanel(false));
 backupExportButton.addEventListener("click", exportBackup);
 backupImportButton.addEventListener("click", () => backupFileInput.click());
 backupFileInput.addEventListener("change", async () => {

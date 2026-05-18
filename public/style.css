@@ -178,7 +178,8 @@ body.has-test-banner .app-tabs {
 .app-tabs,
 .upload-panel,
 .calendar-panel,
-.trash-panel {
+.trash-panel,
+.data-panel {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -269,7 +270,7 @@ body.has-test-banner .app-tabs {
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
   max-width: 100%;
@@ -292,42 +293,27 @@ body.has-test-banner .app-tabs {
   color: #fff;
 }
 
-.backup-toggle-button {
-  min-width: 96px;
-  padding: 0 14px;
-  color: var(--accent-dark);
-  white-space: nowrap;
-}
-
-.backup-panel {
+.data-panel {
   display: grid;
   gap: 14px;
-  width: min(100%, 620px);
-  margin: -10px 0 24px auto;
+  margin: 0 0 24px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 16px;
+  padding: 24px;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
 
-.backup-panel[hidden] {
+.data-panel[hidden] {
   display: none;
 }
 
-.backup-panel-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.backup-panel-header h2,
-.backup-panel p {
+.data-panel h2,
+.data-panel p {
   margin: 0;
 }
 
-.backup-panel p {
+.data-panel p {
   color: var(--muted);
   font-size: 0.92rem;
 }
@@ -1446,19 +1432,13 @@ button:disabled {
   }
 
   .app-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-bottom: 18px;
   }
 
-  .backup-toggle-button {
-    grid-column: 1 / -1;
-    justify-self: end;
-    width: auto;
-  }
-
-  .backup-panel {
-    width: 100%;
-    margin: -6px 0 18px;
+  .data-panel {
+    margin: 0 0 18px;
+    padding: 16px;
   }
 
   .backup-actions {
@@ -1616,11 +1596,6 @@ button:disabled {
   button {
     max-width: 100%;
     width: 100%;
-  }
-
-  .app-tabs .backup-toggle-button,
-  .backup-panel-header button {
-    width: auto;
   }
 
   .auth-bar button {
