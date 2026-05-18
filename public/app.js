@@ -1,7 +1,9 @@
 import { supabase, supabaseAnonKey, supabaseUrl } from "./supabaseClient.js";
 import {
   createLocalEntry,
+  getAllEntriesIncludingDeleted,
   getLocalEntries,
+  bulkImportEntries,
   updateLocalEntry,
   softDeleteLocalEntry,
   restoreLocalEntry,
@@ -46,6 +48,13 @@ const recordingControls = document.querySelector(".recording-controls");
 const helpButton = document.querySelector("#help-button");
 const helpModal = document.querySelector("#help-modal");
 const helpCloseButton = document.querySelector("#help-close-button");
+const backupToggleButton = document.querySelector("#backup-toggle-button");
+const backupPanel = document.querySelector("#backup-panel");
+const backupCloseButton = document.querySelector("#backup-close-button");
+const backupExportButton = document.querySelector("#backup-export-button");
+const backupImportButton = document.querySelector("#backup-import-button");
+const backupFileInput = document.querySelector("#backup-file-input");
+const backupFeedback = document.querySelector("#backup-feedback");
 const manualEntryButton = document.createElement("button");
 
 let mediaRecorder = null;
@@ -82,6 +91,8 @@ const LEGACY_DEMO_MODE_KEY = "gratitude_demo_mode";
 const DEMO_ENTRIES_KEY = "gratitude_demo_entries";
 const DEMO_MODE_VALUE = "demo";
 const LOCAL_MODE_VALUE = "local";
+const BACKUP_APP_ID = "gratitude_journal";
+const BACKUP_VERSION = 1;
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -1064,6 +1075,413 @@ async function permanentlyDeleteEntryData(id) {
 
   if (error) {
     throw error;
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeBackupText(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function getBackupEntryContent(entry) {
+  if (typeof entry.content === "string") {
+    return entry.content;
+  }
+
+  if (Array.isArray(entry.bullets)) {
+    return entry.bullets.map((bullet) => String(bullet || "").trim()).filter(Boolean).join("\n");
+  }
+
+  if (typeof entry.text === "string") {
+    return entry.text;
+  }
+
+  return "";
+}
+
+function normalizeBackupDay(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : getDayKey(date);
+}
+
+function normalizeBackupTimestamp(value, fallback) {
+  if (!value) {
+    return fallback;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
+}
+
+function getBackupSignature(entry) {
+  const dayKey = normalizeBackupDay(entry.entry_date || entry.date || entry.created_at || entry.createdAt);
+  const content = normalizeBackupText(getBackupEntryContent(entry)).toLocaleLowerCase("de-DE");
+  return dayKey && content ? `${dayKey}|${content}` : "";
+}
+
+function normalizeImportedEntry(entry, { preserveId }) {
+  if (!isPlainObject(entry)) {
+    return null;
+  }
+
+  const content = normalizeBackupText(getBackupEntryContent(entry));
+  const entryDate = normalizeBackupDay(entry.entry_date || entry.date || entry.created_at || entry.createdAt);
+
+  if (!content || !entryDate) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const createdAt = normalizeBackupTimestamp(entry.created_at || entry.createdAt, now);
+  const updatedAt = normalizeBackupTimestamp(entry.updated_at || entry.updatedAt, createdAt);
+  const deletedAt = entry.deleted_at || entry.deletedAt
+    ? normalizeBackupTimestamp(entry.deleted_at || entry.deletedAt, null)
+    : null;
+  const row = {
+    entry_date: entryDate,
+    content,
+    transcript: typeof entry.transcript === "string"
+      ? entry.transcript
+      : String(entry.originalText || ""),
+    created_at: createdAt,
+    updated_at: updatedAt,
+    deleted_at: deletedAt,
+  };
+
+  if (preserveId && entry.id) {
+    row.id = String(entry.id);
+  }
+
+  return row;
+}
+
+function sortBackupEntries(entries) {
+  return [...entries].sort((a, b) => {
+    const leftDate = a.entry_date || a.date || a.created_at || "";
+    const rightDate = b.entry_date || b.date || b.created_at || "";
+
+    if (leftDate !== rightDate) {
+      return String(leftDate).localeCompare(String(rightDate));
+    }
+
+    const leftCreated = a.created_at || a.createdAt || "";
+    const rightCreated = b.created_at || b.createdAt || "";
+
+    if (leftCreated !== rightCreated) {
+      return String(leftCreated).localeCompare(String(rightCreated));
+    }
+
+    return String(a.id || "").localeCompare(String(b.id || ""));
+  });
+}
+
+async function getAllCloudEntriesIncludingDeleted() {
+  if (!currentUser || !currentSession?.access_token) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("journal_entries")
+    .select("*")
+    .eq("user_id", currentUser.id)
+    .order("entry_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error("Cloud-Eintr\u00e4ge konnten nicht geladen werden.");
+  }
+
+  return data || [];
+}
+
+async function getAllEntriesForBackup() {
+  if (isLocalModeActive()) {
+    return getAllEntriesIncludingDeleted();
+  }
+
+  return getAllCloudEntriesIncludingDeleted();
+}
+
+async function insertImportedCloudEntries(entries) {
+  if (!entries.length) {
+    return [];
+  }
+
+  if (!currentUser || !currentSession?.access_token) {
+    throw new Error("Bitte melde dich zuerst an.");
+  }
+
+  const rows = entries.map((entry) => ({
+    user_id: currentUser.id,
+    entry_date: entry.entry_date,
+    content: entry.content,
+    transcript: entry.transcript,
+    created_at: entry.created_at,
+    updated_at: entry.updated_at,
+    deleted_at: entry.deleted_at,
+  }));
+
+  const { data, error } = await supabase
+    .from("journal_entries")
+    .insert(rows)
+    .select();
+
+  if (error) {
+    throw new Error("Backup konnte nicht in die Cloud importiert werden.");
+  }
+
+  return data || [];
+}
+
+async function insertImportedEntries(entries) {
+  if (isLocalModeActive()) {
+    return bulkImportEntries(entries);
+  }
+
+  return insertImportedCloudEntries(entries);
+}
+
+function downloadBackupFile(payload) {
+  const dateKey = getTodayInputValue();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `gratitude-backup-${dateKey}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportBackup() {
+  if (!hasJournalAccess()) {
+    setStatus("Bitte melde dich zuerst an.", "error");
+    return;
+  }
+
+  backupExportButton.disabled = true;
+  setStatus("Backup wird erstellt ...");
+
+  try {
+    const entries = sortBackupEntries(await getAllEntriesForBackup());
+    const payload = {
+      app: BACKUP_APP_ID,
+      version: BACKUP_VERSION,
+      exported_at: new Date().toISOString(),
+      storage_mode: isLocalModeActive() ? "local" : "cloud",
+      entries,
+    };
+
+    downloadBackupFile(payload);
+    setStatus(`Backup mit ${entries.length} Eintr\u00e4gen heruntergeladen.`, "success");
+  } catch (error) {
+    console.error(error);
+    setStatus(error.message || "Backup konnte nicht erstellt werden.", "error");
+  } finally {
+    backupExportButton.disabled = false;
+  }
+}
+
+function validateBackupPayload(payload) {
+  if (!isPlainObject(payload)) {
+    throw new Error("Falsches Backup-Format: Die Datei enth\u00e4lt kein g\u00fcltiges Backup-Objekt.");
+  }
+
+  if (payload.app !== BACKUP_APP_ID) {
+    throw new Error("Falsches Backup-Format: Diese Datei geh\u00f6rt nicht zu diesem Dankbarkeitstagebuch.");
+  }
+
+  if (!Array.isArray(payload.entries)) {
+    throw new Error("Die Backup-Datei ist ung\u00fcltig: entries fehlt oder ist kein Array.");
+  }
+}
+
+function renderBackupFeedback({ type = "", title = "", items = [], message = "" } = {}) {
+  backupFeedback.replaceChildren();
+  backupFeedback.className = `backup-feedback backup-import-result${type ? ` is-${type}` : ""}`;
+
+  if (!title && !message && !items.length) {
+    backupFeedback.hidden = true;
+    return;
+  }
+
+  if (title) {
+    const heading = document.createElement("h3");
+    heading.className = "backup-import-title";
+    heading.textContent = title;
+    backupFeedback.append(heading);
+  }
+
+  if (message) {
+    const paragraph = document.createElement("p");
+    paragraph.className = "backup-import-message";
+    paragraph.textContent = message;
+    backupFeedback.append(paragraph);
+  }
+
+  if (items.length) {
+    const list = document.createElement("ul");
+    list.className = "backup-import-list";
+
+    for (const itemText of items) {
+      const item = document.createElement("li");
+      item.textContent = itemText;
+      list.append(item);
+    }
+
+    backupFeedback.append(list);
+  }
+
+  backupFeedback.hidden = false;
+}
+
+function clearBackupFeedback() {
+  renderBackupFeedback();
+}
+
+function renderBackupImportProgress() {
+  renderBackupFeedback({
+    type: "loading",
+    title: "Backup wird gepr\u00fcft und importiert ...",
+  });
+}
+
+function renderBackupImportSuccess({ foundCount, validCount, importedCount, duplicateCount, invalidCount, type = "success" }) {
+  renderBackupFeedback({
+    type,
+    title: type === "warning" ? "Import teilweise abgeschlossen" : "Import abgeschlossen",
+    items: [
+      `${foundCount} Eintr\u00e4ge gefunden`,
+      `${validCount} g\u00fcltige Eintr\u00e4ge`,
+      `${importedCount} neue Eintr\u00e4ge importiert`,
+      `${duplicateCount} Duplikate \u00fcbersprungen`,
+      `${invalidCount} ung\u00fcltige Eintr\u00e4ge`,
+    ],
+  });
+}
+
+function renderBackupImportError(message) {
+  renderBackupFeedback({
+    type: "error",
+    title: "Import fehlgeschlagen",
+    message,
+  });
+}
+
+async function importBackupFile(file) {
+  try {
+    if (!file) {
+      clearBackupFeedback();
+      return;
+    }
+
+    if (!hasJournalAccess()) {
+      const message = "Bitte melde dich zuerst an, bevor du ein Backup importierst.";
+      renderBackupImportError(message);
+      setStatus(message, "error");
+      return;
+    }
+
+    backupImportButton.disabled = true;
+    backupExportButton.disabled = true;
+    renderBackupImportProgress();
+    setStatus("Backup wird gepr\u00fcft und importiert ...");
+
+    let payload = null;
+
+    try {
+      payload = JSON.parse(await file.text());
+    } catch {
+      throw new Error("Die Datei ist kein g\u00fcltiges JSON.");
+    }
+
+    validateBackupPayload(payload);
+
+    const foundCount = payload.entries.length;
+    const existingEntries = await getAllEntriesForBackup();
+    const existingIds = new Set(existingEntries.map((entry) => String(entry.id || "")).filter(Boolean));
+    const existingSignatures = new Set(existingEntries.map(getBackupSignature).filter(Boolean));
+    const rowsToImport = [];
+    let validCount = 0;
+    let duplicateCount = 0;
+    let invalidCount = 0;
+
+    for (const entry of payload.entries) {
+      const signature = isPlainObject(entry) ? getBackupSignature(entry) : "";
+      const id = isPlainObject(entry) && entry.id ? String(entry.id) : "";
+      const normalizedEntry = normalizeImportedEntry(entry, { preserveId: isLocalModeActive() });
+
+      if (!normalizedEntry || !signature) {
+        invalidCount += 1;
+        continue;
+      }
+
+      validCount += 1;
+
+      if ((id && existingIds.has(id)) || existingSignatures.has(signature)) {
+        duplicateCount += 1;
+        continue;
+      }
+
+      rowsToImport.push(normalizedEntry);
+
+      if (id) {
+        existingIds.add(id);
+      }
+      if (normalizedEntry.id) {
+        existingIds.add(String(normalizedEntry.id));
+      }
+      existingSignatures.add(signature);
+    }
+
+    await insertImportedEntries(rowsToImport);
+    await refreshJournalViews();
+    renderBackupImportSuccess({
+      foundCount,
+      validCount,
+      importedCount: rowsToImport.length,
+      duplicateCount,
+      invalidCount,
+      type: invalidCount > 0 ? "warning" : "success",
+    });
+    setStatus("Import abgeschlossen.", "success");
+  } catch (error) {
+    console.error(error);
+    const message = error.message || "Import technisch fehlgeschlagen. Backup konnte nicht importiert werden.";
+    renderBackupImportError(message);
+    setStatus(message, "error");
+  } finally {
+    backupImportButton.disabled = false;
+    backupExportButton.disabled = false;
+    backupFileInput.value = "";
+  }
+}
+
+function toggleBackupPanel(forceOpen) {
+  const shouldOpen = typeof forceOpen === "boolean" ? forceOpen : backupPanel.hidden;
+  backupPanel.hidden = !shouldOpen;
+  backupToggleButton.setAttribute("aria-expanded", String(shouldOpen));
+
+  if (shouldOpen) {
+    backupExportButton.focus();
+  } else {
+    clearBackupFeedback();
   }
 }
 
@@ -2192,6 +2610,13 @@ helpModal.addEventListener("click", (event) => {
   }
 });
 document.addEventListener("keydown", handleHelpModalKeydown);
+backupToggleButton.addEventListener("click", () => toggleBackupPanel());
+backupCloseButton.addEventListener("click", () => toggleBackupPanel(false));
+backupExportButton.addEventListener("click", exportBackup);
+backupImportButton.addEventListener("click", () => backupFileInput.click());
+backupFileInput.addEventListener("change", async () => {
+  await importBackupFile(backupFileInput.files?.[0]);
+});
 
 saveDraftButton.addEventListener("click", async () => {
   console.log("SAVE CLICKED");

@@ -102,6 +102,10 @@ export async function getLocalEntries() {
   return sortLocalRows((rows || []).filter((row) => row && typeof row === "object"));
 }
 
+export async function getAllEntriesIncludingDeleted() {
+  return getLocalEntries();
+}
+
 export async function getLocalEntryById(id) {
   return runEntryStore("readonly", (store) => store.get(id));
 }
@@ -145,4 +149,14 @@ export async function permanentlyDeleteLocalEntry(id) {
   }
 
   await runEntryStore("readwrite", (store) => store.delete(id));
+}
+
+export async function bulkImportEntries(entries) {
+  const rows = entries.map(normalizeLocalEntry);
+  await runEntryStore("readwrite", (store) => {
+    for (const row of rows) {
+      store.put(row);
+    }
+  });
+  return rows;
 }

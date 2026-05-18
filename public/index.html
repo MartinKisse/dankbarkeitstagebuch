@@ -44,7 +44,24 @@
         <button class="tab-button" type="button" data-view="trash" aria-controls="trash-view" aria-selected="false">
           Papierkorb
         </button>
+        <button id="backup-toggle-button" class="backup-toggle-button secondary-button" type="button" aria-expanded="false" aria-controls="backup-panel">
+          Daten
+        </button>
       </nav>
+
+      <section id="backup-panel" class="backup-panel" aria-labelledby="backup-title" hidden>
+        <div class="backup-panel-header">
+          <h2 id="backup-title">Backup</h2>
+          <button id="backup-close-button" class="text-button" type="button">Schlie&szlig;en</button>
+        </div>
+        <p>Im lokalen Modus werden deine Eintr&auml;ge nur auf diesem Ger&auml;t gespeichert. Lade regelm&auml;&szlig;ig ein Backup herunter, damit nichts verloren geht.</p>
+        <div class="backup-actions">
+          <button id="backup-export-button" type="button">Backup herunterladen</button>
+          <button id="backup-import-button" class="secondary-button" type="button">Backup importieren</button>
+          <input id="backup-file-input" type="file" accept=".json,application/json" hidden />
+        </div>
+        <div id="backup-feedback" class="backup-feedback" role="status" aria-live="polite" hidden></div>
+      </section>
 
       <div id="entries-view" class="app-view">
       <section class="upload-panel" aria-labelledby="personal-greeting">
@@ -230,6 +247,6 @@
       <a href="/legal.html">Impressum & Datenschutz</a>
     </footer>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=backup-feedback-2"></script>
   </body>
 </html>

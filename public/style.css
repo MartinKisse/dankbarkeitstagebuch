@@ -269,7 +269,7 @@ body.has-test-banner .app-tabs {
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   gap: 8px;
   width: 100%;
   max-width: 100%;
@@ -290,6 +290,133 @@ body.has-test-banner .app-tabs {
 .tab-button.is-active {
   background: var(--accent);
   color: #fff;
+}
+
+.backup-toggle-button {
+  min-width: 96px;
+  padding: 0 14px;
+  color: var(--accent-dark);
+  white-space: nowrap;
+}
+
+.backup-panel {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 620px);
+  margin: -10px 0 24px auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.backup-panel[hidden] {
+  display: none;
+}
+
+.backup-panel-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.backup-panel-header h2,
+.backup-panel p {
+  margin: 0;
+}
+
+.backup-panel p {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.backup-actions button {
+  min-height: 40px;
+}
+
+.backup-feedback,
+.backup-import-result {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.backup-import-result.is-loading {
+  border-color: rgba(47, 125, 109, 0.3);
+  background: rgba(232, 244, 239, 0.58);
+  color: var(--accent-dark);
+}
+
+.backup-import-result.is-success {
+  border-color: rgba(40, 114, 70, 0.32);
+  background: rgba(232, 244, 239, 0.72);
+  color: var(--success);
+}
+
+.backup-import-result.is-warning {
+  border-color: rgba(158, 111, 34, 0.34);
+  background: #fff8e8;
+  color: #7a531b;
+}
+
+.backup-import-result.is-error {
+  border-color: rgba(163, 58, 58, 0.3);
+  background: #fff3f1;
+  color: var(--danger);
+}
+
+.backup-feedback[hidden] {
+  display: none;
+}
+
+.backup-import-title {
+  margin: 0;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.backup-import-result.is-success .backup-import-title::before {
+  content: "\2713 ";
+}
+
+.backup-import-result.is-warning .backup-import-title::before {
+  content: "! ";
+}
+
+.backup-import-result.is-error .backup-import-title::before {
+  content: "! ";
+}
+
+.backup-import-list {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding-left: 22px;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.backup-import-list li {
+  display: list-item;
+}
+
+.backup-import-message {
+  margin: 8px 0 0;
+  color: inherit;
+  font-weight: 650;
 }
 
 .app-view[hidden] {
@@ -1296,6 +1423,21 @@ button:disabled {
     margin-bottom: 18px;
   }
 
+  .backup-toggle-button {
+    grid-column: 1 / -1;
+    justify-self: end;
+    width: auto;
+  }
+
+  .backup-panel {
+    width: 100%;
+    margin: -6px 0 18px;
+  }
+
+  .backup-actions {
+    justify-content: stretch;
+  }
+
   .tab-button {
     padding: 0 6px;
     font-size: 0.84rem;
@@ -1439,6 +1581,11 @@ button:disabled {
   button {
     max-width: 100%;
     width: 100%;
+  }
+
+  .app-tabs .backup-toggle-button,
+  .backup-panel-header button {
+    width: auto;
   }
 
   .auth-bar button {
