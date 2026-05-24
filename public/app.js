@@ -11,7 +11,7 @@ import {
   restoreLocalEntry,
   permanentlyDeleteLocalEntry,
   permanentlyDeleteLocalTrashEntries,
-} from "./localDb.js?v=2026-05-24-brave-indexeddb-fix-v3";
+} from "./localDb.js?v=2026-05-25-cloud-upsert-fallback-v4";
 const statusText = document.querySelector("#status");
 const greetingEl = document.querySelector("#personal-greeting");
 const streakSummaryEl = document.querySelector("#streak-summary");
@@ -102,10 +102,11 @@ const BACKUP_APP_ID = "gratitude_journal";
 const BACKUP_VERSION = 1;
 const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
 const CONTROL_DEBUG_KEY = "gratitude_debug_controls";
-const APP_DEBUG_VERSION = "2026-05-24-brave-indexeddb-fix-v3";
+const APP_DEBUG_VERSION = "2026-05-25-cloud-upsert-fallback-v4";
 const BACKUP_IMPORT_TIMEOUT_MS = 30_000;
 
 let lastBackupImportStep = "";
+let pendingCloudSyncEntries = [];
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -1448,7 +1449,9 @@ async function insertImportedCloudEntries(entries) {
     throw new Error("Bitte melde dich zuerst an.");
   }
 
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const rows = entries.map((entry) => ({
+    ...(entry.id && uuidPattern.test(String(entry.id)) ? { id: String(entry.id) } : {}),
     user_id: currentUser.id,
     entry_date: entry.entry_date,
     content: entry.content,
@@ -1457,14 +1460,24 @@ async function insertImportedCloudEntries(entries) {
     deleted_at: entry.deleted_at,
   }));
 
+  console.log("[backup-import] Cloud-Upsert starten", {
+    count: rows.length,
+    rowsWithIds: rows.filter((row) => row.id).length,
+  });
+
   const { data, error } = await supabase
     .from("journal_entries")
-    .insert(rows)
+    .upsert(rows, { onConflict: "id" })
     .select();
 
   if (error) {
-    throw new Error("Backup konnte nicht in die Cloud importiert werden.");
+    const message = formatSupabaseInsertError(error) || "Backup konnte nicht in die Cloud importiert werden.";
+    throw new Error(message);
   }
+
+  console.log("[backup-import] Cloud-Upsert abgeschlossen", {
+    count: data?.length || 0,
+  });
 
   return data || [];
 }
@@ -1690,7 +1703,18 @@ function renderBackupImportProgress() {
   });
 }
 
-function renderBackupImportSuccess({ foundCount, validCount, importedCount, duplicateCount, invalidCount, type = "success", usedDirectLocalUpsertFallback = false }) {
+function renderBackupImportSuccess({
+  foundCount,
+  validCount,
+  importedCount,
+  duplicateCount,
+  invalidCount,
+  type = "success",
+  usedDirectLocalUpsertFallback = false,
+  usedDirectCloudUpsertFallback = false,
+  usedLocalCloudFallback = false,
+  skippedRefresh = false,
+}) {
   const items = [
     `${foundCount} Eintr\u00e4ge gefunden`,
     `${validCount} g\u00fcltige Eintr\u00e4ge`,
@@ -1704,11 +1728,32 @@ function renderBackupImportSuccess({ foundCount, validCount, importedCount, dupl
     items.push("Ansicht wurde nicht automatisch aktualisiert, weil das lokale Lesen h\u00e4ngt");
   }
 
+  if (usedDirectCloudUpsertFallback) {
+    items.push("Cloud Direct-Upsert-Fallback verwendet");
+  }
+
+  if (usedLocalCloudFallback) {
+    items.push("Backup wurde lokal importiert. Cloud-Synchronisierung konnte nicht abgeschlossen werden.");
+  }
+
+  if (skippedRefresh) {
+    items.push("Ansicht konnte nicht automatisch aktualisiert werden. Bitte App neu laden.");
+  }
+
   renderBackupFeedback({
     type,
     title: type === "warning" ? "Import teilweise abgeschlossen" : "Import abgeschlossen",
     items,
   });
+
+  if (usedLocalCloudFallback) {
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.className = "secondary-button";
+    retryButton.textContent = "Cloud-Sync erneut versuchen";
+    retryButton.addEventListener("click", retryPendingCloudSync);
+    backupFeedback.append(retryButton);
+  }
 }
 
 function renderBackupImportError(message, { step = "", details = "" } = {}) {
@@ -1854,6 +1899,10 @@ async function runBackupImport(file) {
 
   const foundCount = payload.entries.length;
   let usedDirectLocalUpsertFallback = false;
+  let usedDirectCloudUpsertFallback = false;
+  let usedLocalCloudFallback = false;
+  let skippedRefresh = false;
+  let importedCountOverride = null;
   let existingEntries = [];
 
   if (isLocalModeActive()) {
@@ -1876,14 +1925,32 @@ async function runBackupImport(file) {
       });
     }
   } else {
-    existingEntries = await runImportStep(6, "Bestehende Cloud-Eintr\u00e4ge lesen", () => getAllEntriesForBackup());
+    try {
+      existingEntries = await runImportStep(6, "Bestehende Cloud-Eintr\u00e4ge lesen", () => getAllEntriesForBackup());
+    } catch (error) {
+      usedDirectCloudUpsertFallback = true;
+      console.warn("[backup-import] existing cloud entries could not be read; using direct cloud upsert fallback", {
+        step: error.step || "Bestehende Cloud-Eintr\u00e4ge lesen",
+        details: error.details || error.message,
+      });
+      renderBackupFeedback({
+        type: "warning",
+        title: "Cloud-Fallback aktiv",
+        message: "Bestehende Cloud-Eintr\u00e4ge konnten nicht gelesen werden. Das Backup wird direkt per Upsert gespeichert.",
+        items: [
+          `Schritt: ${error.step || "Bestehende Cloud-Eintr\u00e4ge lesen"}`,
+          `Details: ${error.details || error.message}`,
+        ],
+      });
+    }
   }
 
   const mergeResult = await runImportStep(7, "Eintr\u00e4ge vorbereiten", () => {
-    const result = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
+    const result = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() || usedDirectCloudUpsertFallback });
     console.log("[backup-import] entries prepared", {
       foundCount,
       directLocalUpsertFallback: usedDirectLocalUpsertFallback,
+      directCloudUpsertFallback: usedDirectCloudUpsertFallback,
       validCount: result.validCount,
       importedCount: result.importedCount,
       duplicateCount: result.duplicateCount,
@@ -1892,35 +1959,97 @@ async function runBackupImport(file) {
     return result;
   });
 
-  const importWriteStep = isLocalModeActive() ? "Lokale Daten speichern" : "Cloud-Daten speichern";
-  await runImportStep(8, importWriteStep, () => {
-    console.log("[backup-import] step 8: import writes started", {
-      count: mergeResult.entriesToInsert.length,
-      mode: isLocalModeActive() ? "local" : "cloud",
-    });
-    return insertImportedEntries(mergeResult.entriesToInsert);
-  }, isLocalModeActive() ? BACKUP_IMPORT_TIMEOUT_MS + 1_000 : BACKUP_IMPORT_TIMEOUT_MS);
+  const importWriteStep = isLocalModeActive() ? "Lokale Daten speichern" : "Cloud-Upsert";
+  try {
+    const writeResult = await runImportStep(8, importWriteStep, () => {
+      console.log("[backup-import] step 8: import writes started", {
+        count: mergeResult.entriesToInsert.length,
+        mode: isLocalModeActive() ? "local" : "cloud",
+        directCloudUpsertFallback: usedDirectCloudUpsertFallback,
+      });
+      return insertImportedEntries(mergeResult.entriesToInsert);
+    }, isLocalModeActive() ? BACKUP_IMPORT_TIMEOUT_MS + 1_000 : BACKUP_IMPORT_TIMEOUT_MS);
+    importedCountOverride = Array.isArray(writeResult) ? writeResult.length : mergeResult.importedCount;
+  } catch (error) {
+    if (usedDirectCloudUpsertFallback) {
+      console.error("[backup-import] cloud direct upsert failed; importing backup locally", error);
+      usedLocalCloudFallback = true;
+      pendingCloudSyncEntries = mergeResult.entriesToInsert;
+      const localRows = await runImportStep(8, "Lokal speichern nach Cloud-Fehler", () => bulkImportEntries(mergeResult.entriesToInsert), BACKUP_IMPORT_TIMEOUT_MS + 1_000);
+      importedCountOverride = Array.isArray(localRows) ? localRows.length : mergeResult.importedCount;
+    } else {
+      throw error;
+    }
+  }
   console.log("[backup-import] step 8: import writes completed");
 
-  if (usedDirectLocalUpsertFallback) {
-    console.warn("[backup-import] refresh skipped after direct local upsert fallback because reading local entries already timed out");
+  if (usedDirectLocalUpsertFallback || usedLocalCloudFallback) {
+    skippedRefresh = true;
+    console.warn("[backup-import] refresh skipped after fallback because automatic refresh depends on the path that already failed");
   } else {
-    await runImportStep(9, "Ansicht aktualisieren", async () => {
-      console.log("[backup-import] step 9: refresh started");
-      await refreshJournalViews();
-      console.log("[backup-import] step 9: refresh completed");
-    });
+    try {
+      await runImportStep(9, isLocalModeActive() ? "Ansicht aktualisieren" : "Cloud-Refresh", async () => {
+        console.log("[backup-import] step 9: refresh started");
+        await refreshJournalViews();
+        console.log("[backup-import] step 9: refresh completed");
+      });
+    } catch (error) {
+      skippedRefresh = true;
+      console.warn("[backup-import] import saved, but refresh failed", {
+        step: error.step || "Ansicht aktualisieren",
+        details: error.details || error.message,
+      });
+    }
   }
   console.log("[backup-import] import completed");
 
   return {
     foundCount,
     validCount: mergeResult.validCount,
-    importedCount: mergeResult.importedCount,
+    importedCount: importedCountOverride ?? mergeResult.importedCount,
     duplicateCount: mergeResult.duplicateCount,
     invalidCount: mergeResult.invalidCount,
     usedDirectLocalUpsertFallback,
+    usedDirectCloudUpsertFallback,
+    usedLocalCloudFallback,
+    skippedRefresh,
   };
+}
+
+async function retryPendingCloudSync() {
+  if (!pendingCloudSyncEntries.length) {
+    setStatus("Keine offenen Cloud-Sync-Eintr\u00e4ge vorhanden.", "error");
+    return;
+  }
+
+  if (!currentUser || !currentSession?.access_token) {
+    setStatus("Bitte melde dich an, um den Cloud-Sync erneut zu versuchen.", "error");
+    return;
+  }
+
+  setStatus("Cloud-Sync wird erneut versucht ...");
+
+  try {
+    await runImportStep(11, "Cloud-Sync erneut versuchen", () => insertImportedCloudEntries(pendingCloudSyncEntries), BACKUP_IMPORT_TIMEOUT_MS);
+    pendingCloudSyncEntries = [];
+    renderBackupFeedback({
+      type: "success",
+      title: "Cloud-Sync abgeschlossen",
+      message: "Die lokal importierten Backup-Eintr\u00e4ge wurden in die Cloud synchronisiert.",
+    });
+    setStatus("Cloud-Sync abgeschlossen.", "success");
+
+    try {
+      await runImportStep(12, "Cloud-Refresh", () => refreshJournalViews());
+    } catch (error) {
+      console.warn("[backup-import] cloud sync succeeded, refresh failed", error);
+      setStatus("Cloud-Sync abgeschlossen. Ansicht konnte nicht automatisch aktualisiert werden.", "success");
+    }
+  } catch (error) {
+    const { message, step, details } = getImportErrorInfo(error);
+    renderBackupImportError(message, { step, details });
+    setStatus(message, "error");
+  }
 }
 
 function getLocalMergeDoneKey() {
@@ -2216,7 +2345,13 @@ async function importBackupFile(file) {
     await runImportStep(10, "UI aktualisieren", () => {
       renderBackupImportSuccess({
         ...result,
-        type: result.invalidCount > 0 || result.usedDirectLocalUpsertFallback ? "warning" : "success",
+        type: result.invalidCount > 0
+          || result.usedDirectLocalUpsertFallback
+          || result.usedDirectCloudUpsertFallback
+          || result.usedLocalCloudFallback
+          || result.skippedRefresh
+          ? "warning"
+          : "success",
       });
     });
     showToast("Import abgeschlossen.", "success");
