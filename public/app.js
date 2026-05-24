@@ -100,6 +100,7 @@ const BACKUP_APP_ID = "gratitude_journal";
 const BACKUP_VERSION = 1;
 const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
 const CONTROL_DEBUG_KEY = "gratitude_debug_controls";
+const BACKUP_IMPORT_TIMEOUT_MS = 15_000;
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -1683,6 +1684,90 @@ function renderBackupImportError(message) {
   });
 }
 
+function showToast(message, type = "") {
+  setStatus(message, type);
+}
+
+function createImportTimeoutError() {
+  return new Error("Import konnte nicht abgeschlossen werden.");
+}
+
+function withTimeout(promise, timeoutMs, createError = createImportTimeoutError) {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(createError()), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise])
+    .finally(() => {
+      clearTimeout(timeoutId);
+    });
+}
+
+function readBackupFileText(file) {
+  return withTimeout(new Promise((resolve, reject) => {
+    if (!file) {
+      reject(new Error("Es wurde keine Backup-Datei ausgew\u00e4hlt."));
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.addEventListener("load", () => {
+      console.log("FileReader loaded");
+      resolve(String(reader.result || ""));
+    }, { once: true });
+
+    reader.addEventListener("error", () => {
+      reject(reader.error || new Error("Backup-Datei konnte nicht gelesen werden."));
+    }, { once: true });
+
+    reader.addEventListener("abort", () => {
+      reject(new Error("Backup-Datei wurde nicht vollst\u00e4ndig gelesen."));
+    }, { once: true });
+
+    try {
+      reader.readAsText(file, "utf-8");
+    } catch (error) {
+      reject(error);
+    }
+  }), BACKUP_IMPORT_TIMEOUT_MS);
+}
+
+async function parseBackupFile(file) {
+  const text = await readBackupFileText(file);
+
+  try {
+    const payload = JSON.parse(text);
+    console.log("JSON parsed");
+    return payload;
+  } catch {
+    throw new Error("Die Datei ist kein g\u00fcltiges JSON.");
+  }
+}
+
+async function runBackupImport(file) {
+  const payload = await parseBackupFile(file);
+  validateBackupPayload(payload);
+  console.log("Entries validiert");
+
+  const foundCount = payload.entries.length;
+  const existingEntries = await getAllEntriesForBackup();
+  const mergeResult = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
+
+  await insertImportedEntries(mergeResult.entriesToInsert);
+  await refreshJournalViews();
+  console.log("Import abgeschlossen");
+
+  return {
+    foundCount,
+    validCount: mergeResult.validCount,
+    importedCount: mergeResult.importedCount,
+    duplicateCount: mergeResult.duplicateCount,
+    invalidCount: mergeResult.invalidCount,
+  };
+}
+
 function getLocalMergeDoneKey() {
   return `${LOCAL_MERGE_DONE_KEY_PREFIX}:${currentUser?.id || "anonymous"}`;
 }
@@ -1943,58 +2028,56 @@ async function clearMergedLocalCopy() {
 }
 
 async function importBackupFile(file) {
+  console.log("Import gestartet");
+  console.log("Datei:", file || null);
+
   try {
     if (!file) {
-      clearBackupFeedback();
+      const message = "Es wurde keine Backup-Datei ausgew\u00e4hlt.";
+      renderBackupImportError(message);
+      showToast(message, "error");
       return;
     }
 
     if (!hasJournalAccess()) {
       const message = "Bitte melde dich zuerst an, bevor du ein Backup importierst.";
       renderBackupImportError(message);
-      setStatus(message, "error");
+      showToast(message, "error");
       return;
     }
 
     backupImportButton.disabled = true;
     backupExportButton.disabled = true;
+    backupFileInput.disabled = true;
     renderBackupImportProgress();
-    setStatus("Backup wird gepr\u00fcft und importiert ...");
+    showToast("Backup wird gepr\u00fcft und importiert ...");
 
-    let payload = null;
+    const result = await withTimeout(
+      runBackupImport(file),
+      BACKUP_IMPORT_TIMEOUT_MS,
+      createImportTimeoutError,
+    );
 
-    try {
-      payload = JSON.parse(await file.text());
-    } catch {
-      throw new Error("Die Datei ist kein g\u00fcltiges JSON.");
-    }
-
-    validateBackupPayload(payload);
-
-    const foundCount = payload.entries.length;
-    const existingEntries = await getAllEntriesForBackup();
-    const mergeResult = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
-
-    await insertImportedEntries(mergeResult.entriesToInsert);
-    await refreshJournalViews();
     renderBackupImportSuccess({
-      foundCount,
-      validCount: mergeResult.validCount,
-      importedCount: mergeResult.importedCount,
-      duplicateCount: mergeResult.duplicateCount,
-      invalidCount: mergeResult.invalidCount,
-      type: mergeResult.invalidCount > 0 ? "warning" : "success",
+      ...result,
+      type: result.invalidCount > 0 ? "warning" : "success",
     });
-    setStatus("Import abgeschlossen.", "success");
+    showToast("Import abgeschlossen.", "success");
   } catch (error) {
-    console.error(error);
+    console.error("Backup-Import Fehler:", error);
     const message = error.message || "Import technisch fehlgeschlagen. Backup konnte nicht importiert werden.";
     renderBackupImportError(message);
-    setStatus(message, "error");
+    showToast(message, "error");
   } finally {
     backupImportButton.disabled = false;
     backupExportButton.disabled = false;
-    backupFileInput.value = "";
+    backupFileInput.disabled = false;
+
+    try {
+      backupFileInput.value = "";
+    } catch (error) {
+      console.warn("Backup-Dateiauswahl konnte nicht zur\u00fcckgesetzt werden.", error);
+    }
   }
 }
 
@@ -3168,9 +3251,25 @@ document.addEventListener("click", (event) => {
   }
 });
 backupExportButton.addEventListener("click", exportBackup);
-backupImportButton.addEventListener("click", () => backupFileInput.click());
+backupImportButton.addEventListener("click", () => {
+  try {
+    backupFileInput.value = "";
+  } catch (error) {
+    console.warn("Backup-Dateiauswahl konnte vor dem Import nicht zur\u00fcckgesetzt werden.", error);
+  }
+
+  backupFileInput.click();
+});
 backupFileInput.addEventListener("change", async () => {
-  await importBackupFile(backupFileInput.files?.[0]);
+  const file = backupFileInput.files?.[0] || null;
+  console.log("Backup-Dateiauswahl ge\u00e4ndert", {
+    fileCount: backupFileInput.files?.length || 0,
+    hasFile: Boolean(file),
+    name: file?.name || "",
+    size: file?.size || 0,
+    type: file?.type || "",
+  });
+  await importBackupFile(file);
 });
 
 saveDraftButton.addEventListener("click", async () => {
