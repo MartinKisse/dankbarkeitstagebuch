@@ -1,6 +1,7 @@
 const DB_NAME = "gratitude_journal";
 const DB_VERSION = 1;
 const ENTRIES_STORE = "entries";
+const BULK_IMPORT_TIMEOUT_MS = 15_000;
 
 let dbPromise = null;
 
@@ -172,10 +173,108 @@ export async function permanentlyDeleteLocalTrashEntries() {
 
 export async function bulkImportEntries(entries) {
   const rows = entries.map(normalizeLocalEntry);
-  await runEntryStore("readwrite", (store) => {
-    for (const row of rows) {
-      store.put(row);
-    }
+
+  console.log("[backup-import] IndexedDB bulk import started", {
+    count: rows.length,
   });
+
+  if (!rows.length) {
+    console.log("[backup-import] IndexedDB bulk import skipped: no rows");
+    return rows;
+  }
+
+  const db = await openLocalDb();
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    let completedWrites = 0;
+    const transaction = db.transaction(ENTRIES_STORE, "readwrite");
+    const store = transaction.objectStore(ENTRIES_STORE);
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      try {
+        transaction.abort();
+      } catch {
+        // Transaction may already be inactive.
+      }
+      reject(new Error(`IndexedDB transaction timed out after ${BULK_IMPORT_TIMEOUT_MS} ms (${completedWrites}/${rows.length} writes completed).`));
+    }, BULK_IMPORT_TIMEOUT_MS);
+
+    const finish = (callback) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      callback();
+    };
+
+    transaction.addEventListener("complete", () => {
+      console.log("[backup-import] IndexedDB bulk import completed", {
+        count: rows.length,
+      });
+      finish(resolve);
+    });
+
+    transaction.addEventListener("error", () => {
+      finish(() => reject(transaction.error || new Error("IndexedDB transaction failed.")));
+    });
+
+    transaction.addEventListener("abort", () => {
+      finish(() => reject(transaction.error || new Error("IndexedDB transaction aborted.")));
+    });
+
+    rows.forEach((row, index) => {
+      if (settled) {
+        return;
+      }
+
+      console.log("[backup-import] IndexedDB write started", {
+        index,
+        id: row.id,
+        entry_date: row.entry_date,
+      });
+
+      let request = null;
+      try {
+        request = store.put(row);
+      } catch (error) {
+        finish(() => reject(new Error(`IndexedDB write failed at index ${index}, id ${row.id || "unknown"}: ${error.message || error}`)));
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+        return;
+      }
+
+      request.addEventListener("success", () => {
+        completedWrites += 1;
+        console.log("[backup-import] IndexedDB write completed", {
+          index,
+          id: row.id,
+          completedWrites,
+          totalWrites: rows.length,
+        });
+      });
+
+      request.addEventListener("error", (event) => {
+        event.preventDefault();
+        const reason = request.error?.message || "unknown IndexedDB request error";
+        finish(() => reject(new Error(`IndexedDB write failed at index ${index}, id ${row.id || "unknown"}: ${reason}`)));
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+      });
+    });
+  });
+
   return rows;
 }

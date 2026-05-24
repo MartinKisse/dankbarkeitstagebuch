@@ -102,6 +102,8 @@ const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
 const CONTROL_DEBUG_KEY = "gratitude_debug_controls";
 const BACKUP_IMPORT_TIMEOUT_MS = 15_000;
 
+let lastBackupImportStep = "";
+
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
 const SILENCE_TIMEOUT_MS = 60_000;
@@ -1347,11 +1349,18 @@ function mergeEntries(sourceEntries, existingEntries, { preserveId = false } = {
   let duplicateCount = 0;
   let invalidCount = 0;
 
-  for (const entry of sourceEntries) {
+  for (const [index, entry] of sourceEntries.entries()) {
     const duplicateInfo = detectDuplicateEntry(entry, existingIds, existingSignatures);
     const normalizedEntry = normalizeImportedEntry(entry, { preserveId });
+    const entryId = isPlainObject(entry) && entry.id ? String(entry.id) : "";
 
     if (!normalizedEntry || !duplicateInfo.signature) {
+      console.warn("[backup-import] invalid entry skipped", {
+        index,
+        id: entryId || "unknown",
+        hasNormalizedEntry: Boolean(normalizedEntry),
+        hasSignature: Boolean(duplicateInfo.signature),
+      });
       invalidCount += 1;
       continue;
     }
@@ -1359,6 +1368,10 @@ function mergeEntries(sourceEntries, existingEntries, { preserveId = false } = {
     validCount += 1;
 
     if (duplicateInfo.isDuplicate) {
+      console.log("[backup-import] duplicate entry skipped", {
+        index,
+        id: duplicateInfo.id || "unknown",
+      });
       duplicateCount += 1;
       continue;
     }
@@ -1676,11 +1689,17 @@ function renderBackupImportSuccess({ foundCount, validCount, importedCount, dupl
   });
 }
 
-function renderBackupImportError(message) {
+function renderBackupImportError(message, { step = "", details = "" } = {}) {
+  const items = [
+    step ? `Schritt: ${step}` : "",
+    details ? `Details: ${details}` : "",
+  ].filter(Boolean);
+
   renderBackupFeedback({
     type: "error",
     title: "Import fehlgeschlagen",
     message,
+    items,
   });
 }
 
@@ -1689,7 +1708,32 @@ function showToast(message, type = "") {
 }
 
 function createImportTimeoutError() {
-  return new Error("Import konnte nicht abgeschlossen werden.");
+  const error = new Error(`Import konnte nicht abgeschlossen werden. Schritt: ${lastBackupImportStep || "unbekannt"}.`);
+  error.step = lastBackupImportStep || "unbekannt";
+  error.details = `Globaler Timeout nach ${BACKUP_IMPORT_TIMEOUT_MS} ms`;
+  return error;
+}
+
+function createStepTimeoutError(step, details = `Timeout nach ${BACKUP_IMPORT_TIMEOUT_MS} ms`) {
+  const error = new Error(`Import konnte nicht abgeschlossen werden. Schritt: ${step}.`);
+  error.step = step;
+  error.details = details;
+  return error;
+}
+
+function annotateImportError(error, step, fallbackDetails = "") {
+  const annotatedError = error instanceof Error ? error : new Error(String(error || fallbackDetails || "Unbekannter Fehler"));
+  annotatedError.step = annotatedError.step || step;
+  annotatedError.details = annotatedError.details || annotatedError.message || fallbackDetails;
+  return annotatedError;
+}
+
+function getImportErrorInfo(error) {
+  return {
+    message: error?.message || "Import technisch fehlgeschlagen. Backup konnte nicht importiert werden.",
+    step: error?.step || lastBackupImportStep || "unbekannt",
+    details: error?.details || error?.message || "Keine technischen Details vorhanden.",
+  };
 }
 
 function withTimeout(promise, timeoutMs, createError = createImportTimeoutError) {
@@ -1704,7 +1748,27 @@ function withTimeout(promise, timeoutMs, createError = createImportTimeoutError)
     });
 }
 
-function readBackupFileText(file) {
+async function runImportStep(stepNumber, step, task, timeoutMs = BACKUP_IMPORT_TIMEOUT_MS) {
+  lastBackupImportStep = step;
+  console.log(`[backup-import] step ${stepNumber}: ${step} started`);
+
+  try {
+    const taskPromise = Promise.resolve().then(task);
+    const result = timeoutMs
+      ? await withTimeout(
+        taskPromise,
+        timeoutMs,
+        () => createStepTimeoutError(step, `Timeout nach ${timeoutMs} ms`),
+      )
+      : await taskPromise;
+    console.log(`[backup-import] step ${stepNumber}: ${step} completed`);
+    return result;
+  } catch (error) {
+    throw annotateImportError(error, step);
+  }
+}
+
+function readBackupFileText(file, step = "Datei lesen") {
   return withTimeout(new Promise((resolve, reject) => {
     if (!file) {
       reject(new Error("Es wurde keine Backup-Datei ausgew\u00e4hlt."));
@@ -1712,52 +1776,85 @@ function readBackupFileText(file) {
     }
 
     const reader = new FileReader();
+    console.log("[backup-import] step 2: file read started");
 
     reader.addEventListener("load", () => {
-      console.log("FileReader loaded");
+      console.log("[backup-import] step 3: file read completed");
       resolve(String(reader.result || ""));
     }, { once: true });
 
     reader.addEventListener("error", () => {
-      reject(reader.error || new Error("Backup-Datei konnte nicht gelesen werden."));
+      reject(annotateImportError(reader.error || new Error("Backup-Datei konnte nicht gelesen werden."), step, "FileReader error"));
     }, { once: true });
 
     reader.addEventListener("abort", () => {
-      reject(new Error("Backup-Datei wurde nicht vollst\u00e4ndig gelesen."));
+      reject(annotateImportError(new Error("Backup-Datei wurde nicht vollst\u00e4ndig gelesen."), step, "FileReader abort"));
     }, { once: true });
 
     try {
       reader.readAsText(file, "utf-8");
     } catch (error) {
-      reject(error);
+      reject(annotateImportError(error, step));
     }
-  }), BACKUP_IMPORT_TIMEOUT_MS);
+  }), BACKUP_IMPORT_TIMEOUT_MS, () => createStepTimeoutError(step, `FileReader Timeout nach ${BACKUP_IMPORT_TIMEOUT_MS} ms`));
 }
 
 async function parseBackupFile(file) {
-  const text = await readBackupFileText(file);
+  const text = await runImportStep(2, "Datei lesen", () => readBackupFileText(file));
 
-  try {
-    const payload = JSON.parse(text);
-    console.log("JSON parsed");
-    return payload;
-  } catch {
-    throw new Error("Die Datei ist kein g\u00fcltiges JSON.");
-  }
+  return runImportStep(4, "JSON parsen", () => {
+    try {
+      const payload = JSON.parse(text);
+      console.log("[backup-import] step 4: json parsed");
+      return payload;
+    } catch (error) {
+      const parseError = new Error("Die Datei ist kein g\u00fcltiges JSON.");
+      parseError.step = "JSON parsen";
+      parseError.details = error.message || "JSON.parse fehlgeschlagen";
+      throw parseError;
+    }
+  });
 }
 
 async function runBackupImport(file) {
   const payload = await parseBackupFile(file);
-  validateBackupPayload(payload);
-  console.log("Entries validiert");
+  await runImportStep(5, "Backup validieren", () => {
+    validateBackupPayload(payload);
+    console.log("[backup-import] step 5: validation completed", {
+      entries: payload.entries.length,
+    });
+  });
 
   const foundCount = payload.entries.length;
-  const existingEntries = await getAllEntriesForBackup();
-  const mergeResult = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
+  const existingEntries = await runImportStep(6, "Bestehende Eintr\u00e4ge lesen", () => getAllEntriesForBackup());
+  const mergeResult = await runImportStep(7, "Eintr\u00e4ge vorbereiten", () => {
+    const result = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
+    console.log("[backup-import] entries prepared", {
+      foundCount,
+      validCount: result.validCount,
+      importedCount: result.importedCount,
+      duplicateCount: result.duplicateCount,
+      invalidCount: result.invalidCount,
+    });
+    return result;
+  });
 
-  await insertImportedEntries(mergeResult.entriesToInsert);
-  await refreshJournalViews();
-  console.log("Import abgeschlossen");
+  const importWriteStep = isLocalModeActive() ? "Lokale Daten speichern" : "Cloud-Daten speichern";
+  await runImportStep(8, importWriteStep, () => {
+    console.log("[backup-import] step 8: import writes started", {
+      count: mergeResult.entriesToInsert.length,
+      mode: isLocalModeActive() ? "local" : "cloud",
+    });
+    return insertImportedEntries(mergeResult.entriesToInsert);
+  }, isLocalModeActive() ? BACKUP_IMPORT_TIMEOUT_MS + 1_000 : BACKUP_IMPORT_TIMEOUT_MS);
+  console.log("[backup-import] step 8: import writes completed");
+
+  await runImportStep(9, "Ansicht aktualisieren", async () => {
+    console.log("[backup-import] step 9: refresh started");
+    await refreshJournalViews();
+    console.log("[backup-import] step 9: refresh completed");
+  });
+  console.log("[backup-import] import completed");
 
   return {
     foundCount,
@@ -2028,13 +2125,17 @@ async function clearMergedLocalCopy() {
 }
 
 async function importBackupFile(file) {
-  console.log("Import gestartet");
-  console.log("Datei:", file || null);
+  lastBackupImportStep = "Datei ausw\u00e4hlen";
+  console.log("[backup-import] import started");
+  console.log("[backup-import] step 1: file selected", file || null);
 
   try {
     if (!file) {
       const message = "Es wurde keine Backup-Datei ausgew\u00e4hlt.";
-      renderBackupImportError(message);
+      renderBackupImportError(message, {
+        step: "Datei ausw\u00e4hlen",
+        details: "input.files[0] war leer.",
+      });
       showToast(message, "error");
       return;
     }
@@ -2052,21 +2153,19 @@ async function importBackupFile(file) {
     renderBackupImportProgress();
     showToast("Backup wird gepr\u00fcft und importiert ...");
 
-    const result = await withTimeout(
-      runBackupImport(file),
-      BACKUP_IMPORT_TIMEOUT_MS,
-      createImportTimeoutError,
-    );
+    const result = await runBackupImport(file);
 
-    renderBackupImportSuccess({
-      ...result,
-      type: result.invalidCount > 0 ? "warning" : "success",
+    await runImportStep(10, "UI aktualisieren", () => {
+      renderBackupImportSuccess({
+        ...result,
+        type: result.invalidCount > 0 ? "warning" : "success",
+      });
     });
     showToast("Import abgeschlossen.", "success");
   } catch (error) {
     console.error("Backup-Import Fehler:", error);
-    const message = error.message || "Import technisch fehlgeschlagen. Backup konnte nicht importiert werden.";
-    renderBackupImportError(message);
+    const { message, step, details } = getImportErrorInfo(error);
+    renderBackupImportError(message, { step, details });
     showToast(message, "error");
   } finally {
     backupImportButton.disabled = false;
