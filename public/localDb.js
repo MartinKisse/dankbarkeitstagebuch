@@ -1,17 +1,47 @@
 const DB_NAME = "gratitude_journal";
 const DB_VERSION = 1;
 const ENTRIES_STORE = "entries";
+const DB_OPERATION_TIMEOUT_MS = 15_000;
 const BULK_IMPORT_TIMEOUT_MS = 15_000;
 
-let dbPromise = null;
+function createDbError(message, cause) {
+  const error = new Error(cause?.message ? `${message}: ${cause.message}` : message);
+  error.cause = cause;
+  return error;
+}
+
+function closeLocalDb(db) {
+  try {
+    db?.close();
+  } catch (error) {
+    console.warn("[local-db] db close failed", error);
+  }
+}
 
 function openLocalDb() {
-  if (dbPromise) {
-    return dbPromise;
-  }
+  console.log("[local-db] opening db");
 
-  dbPromise = new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      reject(new Error(`IndexedDB open timed out after ${DB_OPERATION_TIMEOUT_MS} ms.`));
+    }, DB_OPERATION_TIMEOUT_MS);
+
+    const finish = (callback) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      callback();
+    };
 
     request.addEventListener("upgradeneeded", () => {
       const db = request.result;
@@ -24,31 +54,208 @@ function openLocalDb() {
       }
     });
 
-    request.addEventListener("success", () => resolve(request.result));
-    request.addEventListener("error", () => reject(request.error));
+    request.addEventListener("success", () => {
+      console.log("[local-db] db opened");
+      finish(() => resolve(request.result));
+    });
+    request.addEventListener("error", () => {
+      finish(() => reject(createDbError("IndexedDB open failed", request.error)));
+    });
+    request.addEventListener("blocked", () => {
+      console.warn("[local-db] db open blocked");
+    });
   });
-
-  return dbPromise;
 }
 
-function runEntryStore(mode, callback) {
-  return openLocalDb().then((db) => new Promise((resolve, reject) => {
-    const transaction = db.transaction(ENTRIES_STORE, mode);
-    const store = transaction.objectStore(ENTRIES_STORE);
-    const request = callback(store);
-    let result = null;
+async function runEntryStore(mode, callback, label = "operation") {
+  const db = await openLocalDb();
 
-    if (request) {
-      request.addEventListener("success", () => {
-        result = request.result;
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      let transaction = null;
+      let store = null;
+      let request = null;
+      let result = null;
+      const timeoutId = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        try {
+          transaction?.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+        reject(new Error(`IndexedDB ${label} timed out after ${DB_OPERATION_TIMEOUT_MS} ms.`));
+      }, DB_OPERATION_TIMEOUT_MS);
+
+      const finish = (callbackFn) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timeoutId);
+        callbackFn();
+      };
+
+      try {
+        console.log(`[local-db] starting ${mode} transaction`, { label });
+        transaction = db.transaction(ENTRIES_STORE, mode);
+        console.log("[local-db] transaction started", { label });
+        store = transaction.objectStore(ENTRIES_STORE);
+        console.log("[local-db] object store ready", { label });
+      } catch (error) {
+        finish(() => reject(createDbError(`IndexedDB ${label} transaction setup failed`, error)));
+        return;
+      }
+
+      transaction.addEventListener("complete", () => {
+        finish(() => resolve(result));
       });
-      request.addEventListener("error", () => reject(request.error));
-    }
 
-    transaction.addEventListener("complete", () => resolve(result));
-    transaction.addEventListener("error", () => reject(transaction.error));
-    transaction.addEventListener("abort", () => reject(transaction.error));
-  }));
+      transaction.addEventListener("error", () => {
+        finish(() => reject(createDbError(`IndexedDB ${label} transaction failed`, transaction.error)));
+      });
+
+      transaction.addEventListener("abort", () => {
+        finish(() => reject(createDbError(`IndexedDB ${label} transaction aborted`, transaction.error)));
+      });
+
+      try {
+        request = callback(store);
+      } catch (error) {
+        finish(() => reject(createDbError(`IndexedDB ${label} request setup failed`, error)));
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+        return;
+      }
+
+      if (request) {
+        request.addEventListener("success", () => {
+          result = request.result;
+        });
+        request.addEventListener("error", (event) => {
+          event.preventDefault();
+          finish(() => reject(createDbError(`IndexedDB ${label} request failed`, request.error)));
+          try {
+            transaction.abort();
+          } catch {
+            // Transaction may already be inactive.
+          }
+        });
+        request.addEventListener("abort", () => {
+          finish(() => reject(createDbError(`IndexedDB ${label} request aborted`, request.error)));
+        });
+      }
+    });
+  } finally {
+    closeLocalDb(db);
+  }
+}
+
+async function readAllLocalRowsWithCursor() {
+  const db = await openLocalDb();
+
+  try {
+    return await new Promise((resolve, reject) => {
+      const rows = [];
+      let settled = false;
+      let transaction = null;
+      let store = null;
+      let request = null;
+      const timeoutId = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        try {
+          transaction?.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+        reject(new Error(`IndexedDB cursor iteration timed out after ${DB_OPERATION_TIMEOUT_MS} ms (${rows.length} entries loaded).`));
+      }, DB_OPERATION_TIMEOUT_MS);
+
+      const finish = (callback) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timeoutId);
+        callback();
+      };
+
+      try {
+        console.log("[local-db] starting readonly transaction");
+        transaction = db.transaction(ENTRIES_STORE, "readonly");
+        console.log("[local-db] transaction started");
+        store = transaction.objectStore(ENTRIES_STORE);
+        console.log("[local-db] object store ready");
+      } catch (error) {
+        finish(() => reject(createDbError("IndexedDB readonly transaction setup failed", error)));
+        return;
+      }
+
+      transaction.addEventListener("complete", () => {
+        console.log("[local-db] entries loaded:", rows.length);
+        finish(() => resolve(rows));
+      });
+
+      transaction.addEventListener("error", () => {
+        finish(() => reject(createDbError("IndexedDB readonly transaction failed", transaction.error)));
+      });
+
+      transaction.addEventListener("abort", () => {
+        finish(() => reject(createDbError("IndexedDB readonly transaction aborted", transaction.error)));
+      });
+
+      try {
+        console.log("[local-db] requesting getAll skipped; using cursor fallback");
+        console.log("[local-db] requesting cursor");
+        request = store.openCursor();
+      } catch (error) {
+        finish(() => reject(createDbError("IndexedDB openCursor setup failed", error)));
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+        return;
+      }
+
+      request.addEventListener("success", (event) => {
+        const cursor = event.target.result;
+
+        if (!cursor) {
+          console.log("[local-db] cursor completed");
+          return;
+        }
+
+        rows.push(cursor.value);
+        cursor.continue();
+      });
+
+      request.addEventListener("error", (event) => {
+        event.preventDefault();
+        finish(() => reject(createDbError("IndexedDB cursor request failed", request.error)));
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be inactive.
+        }
+      });
+    });
+  } finally {
+    closeLocalDb(db);
+  }
 }
 
 function createLocalId() {
@@ -94,12 +301,12 @@ function hasOwn(object, key) {
 
 export async function createLocalEntry(entry) {
   const row = normalizeLocalEntry(entry);
-  await runEntryStore("readwrite", (store) => store.put(row));
+  await runEntryStore("readwrite", (store) => store.put(row), "create entry");
   return row;
 }
 
 export async function getLocalEntries() {
-  const rows = await runEntryStore("readonly", (store) => store.getAll());
+  const rows = await readAllLocalRowsWithCursor();
   return sortLocalRows((rows || []).filter((row) => row && typeof row === "object"));
 }
 
@@ -108,11 +315,11 @@ export async function getAllEntriesIncludingDeleted() {
 }
 
 export async function clearAllEntries() {
-  await runEntryStore("readwrite", (store) => store.clear());
+  await runEntryStore("readwrite", (store) => store.clear(), "clear entries");
 }
 
 export async function getLocalEntryById(id) {
-  return runEntryStore("readonly", (store) => store.get(id));
+  return runEntryStore("readonly", (store) => store.get(id), "get entry by id");
 }
 
 export async function updateLocalEntry(id, updates) {
@@ -135,7 +342,7 @@ export async function updateLocalEntry(id, updates) {
     source: "local",
   };
 
-  await runEntryStore("readwrite", (store) => store.put(row));
+  await runEntryStore("readwrite", (store) => store.put(row), "update entry");
   return row;
 }
 
@@ -153,7 +360,7 @@ export async function permanentlyDeleteLocalEntry(id) {
     return;
   }
 
-  await runEntryStore("readwrite", (store) => store.delete(id));
+  await runEntryStore("readwrite", (store) => store.delete(id), "delete entry");
 }
 
 export async function permanentlyDeleteLocalTrashEntries() {
@@ -168,7 +375,7 @@ export async function permanentlyDeleteLocalTrashEntries() {
     for (const id of deletedIds) {
       store.delete(id);
     }
-  });
+  }, "delete trash entries");
 }
 
 export async function bulkImportEntries(entries) {
@@ -185,96 +392,114 @@ export async function bulkImportEntries(entries) {
 
   const db = await openLocalDb();
 
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    let completedWrites = 0;
-    const transaction = db.transaction(ENTRIES_STORE, "readwrite");
-    const store = transaction.objectStore(ENTRIES_STORE);
-    const timeoutId = setTimeout(() => {
-      if (settled) {
-        return;
-      }
+  try {
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      let completedWrites = 0;
+      let transaction = null;
+      let store = null;
+      const timeoutId = setTimeout(() => {
+        if (settled) {
+          return;
+        }
 
-      settled = true;
-      try {
-        transaction.abort();
-      } catch {
-        // Transaction may already be inactive.
-      }
-      reject(new Error(`IndexedDB transaction timed out after ${BULK_IMPORT_TIMEOUT_MS} ms (${completedWrites}/${rows.length} writes completed).`));
-    }, BULK_IMPORT_TIMEOUT_MS);
-
-    const finish = (callback) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timeoutId);
-      callback();
-    };
-
-    transaction.addEventListener("complete", () => {
-      console.log("[backup-import] IndexedDB bulk import completed", {
-        count: rows.length,
-      });
-      finish(resolve);
-    });
-
-    transaction.addEventListener("error", () => {
-      finish(() => reject(transaction.error || new Error("IndexedDB transaction failed.")));
-    });
-
-    transaction.addEventListener("abort", () => {
-      finish(() => reject(transaction.error || new Error("IndexedDB transaction aborted.")));
-    });
-
-    rows.forEach((row, index) => {
-      if (settled) {
-        return;
-      }
-
-      console.log("[backup-import] IndexedDB write started", {
-        index,
-        id: row.id,
-        entry_date: row.entry_date,
-      });
-
-      let request = null;
-      try {
-        request = store.put(row);
-      } catch (error) {
-        finish(() => reject(new Error(`IndexedDB write failed at index ${index}, id ${row.id || "unknown"}: ${error.message || error}`)));
+        settled = true;
         try {
-          transaction.abort();
+          transaction?.abort();
         } catch {
           // Transaction may already be inactive.
         }
+        reject(new Error(`IndexedDB transaction timed out after ${BULK_IMPORT_TIMEOUT_MS} ms (${completedWrites}/${rows.length} writes completed).`));
+      }, BULK_IMPORT_TIMEOUT_MS);
+
+      const finish = (callback) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timeoutId);
+        callback();
+      };
+
+      try {
+        console.log("[local-db] starting readwrite transaction", { label: "bulk import" });
+        transaction = db.transaction(ENTRIES_STORE, "readwrite");
+        console.log("[local-db] transaction started", { label: "bulk import" });
+        store = transaction.objectStore(ENTRIES_STORE);
+        console.log("[local-db] object store ready", { label: "bulk import" });
+      } catch (error) {
+        finish(() => reject(createDbError("IndexedDB bulk import transaction setup failed", error)));
         return;
       }
 
-      request.addEventListener("success", () => {
-        completedWrites += 1;
-        console.log("[backup-import] IndexedDB write completed", {
+      transaction.addEventListener("complete", () => {
+        console.log("[backup-import] IndexedDB bulk import completed", {
+          count: rows.length,
+        });
+        finish(resolve);
+      });
+
+      transaction.addEventListener("error", () => {
+        finish(() => reject(createDbError("IndexedDB bulk import transaction failed", transaction.error)));
+      });
+
+      transaction.addEventListener("abort", () => {
+        finish(() => reject(createDbError("IndexedDB bulk import transaction aborted", transaction.error)));
+      });
+
+      rows.forEach((row, index) => {
+        if (settled) {
+          return;
+        }
+
+        console.log("[backup-import] IndexedDB write started", {
           index,
           id: row.id,
-          completedWrites,
-          totalWrites: rows.length,
+          entry_date: row.entry_date,
+        });
+
+        let request = null;
+        try {
+          request = store.put(row);
+        } catch (error) {
+          finish(() => reject(new Error(`IndexedDB write failed at index ${index}, id ${row.id || "unknown"}: ${error.message || error}`)));
+          try {
+            transaction.abort();
+          } catch {
+            // Transaction may already be inactive.
+          }
+          return;
+        }
+
+        request.addEventListener("success", () => {
+          completedWrites += 1;
+          console.log("[backup-import] IndexedDB write completed", {
+            index,
+            id: row.id,
+            completedWrites,
+            totalWrites: rows.length,
+          });
+        });
+
+        request.addEventListener("error", (event) => {
+          event.preventDefault();
+          const reason = request.error?.message || "unknown IndexedDB request error";
+          finish(() => reject(new Error(`IndexedDB write failed at index ${index}, id ${row.id || "unknown"}: ${reason}`)));
+          try {
+            transaction.abort();
+          } catch {
+            // Transaction may already be inactive.
+          }
+        });
+        request.addEventListener("abort", () => {
+          finish(() => reject(new Error(`IndexedDB write aborted at index ${index}, id ${row.id || "unknown"}`)));
         });
       });
-
-      request.addEventListener("error", (event) => {
-        event.preventDefault();
-        const reason = request.error?.message || "unknown IndexedDB request error";
-        finish(() => reject(new Error(`IndexedDB write failed at index ${index}, id ${row.id || "unknown"}: ${reason}`)));
-        try {
-          transaction.abort();
-        } catch {
-          // Transaction may already be inactive.
-        }
-      });
     });
-  });
+  } finally {
+    closeLocalDb(db);
+  }
 
   return rows;
 }
