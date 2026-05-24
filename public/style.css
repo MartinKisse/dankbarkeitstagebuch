@@ -1506,18 +1506,35 @@ button:disabled {
 
 @media (max-width: 720px) {
   .app-shell {
-    width: min(100% - 24px, 1130px);
+    width: min(100% - 20px, 1130px);
     max-width: 100%;
-    padding: 18px 0 24px;
+    padding: 10px 0 20px;
   }
 
   .auth-bar {
-    gap: 8px;
-    margin-bottom: 16px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-bottom: 8px;
   }
 
   .auth-bar span {
+    min-width: 0;
     max-width: 100%;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.74rem;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .auth-bar button {
+    width: auto;
+    min-height: 28px;
+    border-radius: 7px;
+    padding: 0 9px;
+    font-size: 0.72rem;
   }
 
   .test-banner {
@@ -1553,12 +1570,14 @@ button:disabled {
   }
 
   .intro {
-    margin-bottom: 18px;
+    margin-bottom: 8px;
   }
 
   .app-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-bottom: 18px;
+    gap: 5px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 10px;
+    padding: 4px 0;
   }
 
   .data-panel {
@@ -1571,8 +1590,10 @@ button:disabled {
   }
 
   .tab-button {
-    padding: 0 6px;
-    font-size: 0.84rem;
+    min-height: 34px;
+    border-radius: 7px;
+    padding: 0 4px;
+    font-size: 0.76rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1584,8 +1605,8 @@ button:disabled {
   }
 
   .upload-panel {
-    padding: 18px;
-    margin-bottom: 24px;
+    padding: 12px;
+    margin-bottom: 16px;
   }
 
   .calendar-panel {
@@ -1647,38 +1668,82 @@ button:disabled {
 
   .home-greeting-row {
     flex-direction: column;
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: 7px;
+    margin-bottom: 10px;
   }
 
   #personal-greeting {
-    font-size: 1.22rem;
-    line-height: 1.35;
+    font-size: 1rem;
+    line-height: 1.24;
   }
 
   .streak-summary {
-    gap: 8px;
+    gap: 5px;
     width: auto;
     max-width: 100%;
     margin: 0;
+    border-radius: 999px;
+    padding: 5px 8px;
+    font-size: 0.78rem;
+    line-height: 1.15;
     text-align: center;
   }
 
+  .streak-icon {
+    font-size: 0.88rem;
+  }
+
   .streak-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
     white-space: nowrap;
   }
 
   .streak-info-button {
-    width: 20px;
-    height: 20px;
-    min-height: 20px;
-    font-size: 11px;
+    width: 17px;
+    height: 17px;
+    min-height: 17px;
+    font-size: 10px;
+  }
+
+  .streak-summary small {
+    display: none;
+  }
+
+  .entry-date-control {
+    gap: 5px;
+    margin-bottom: 10px;
+  }
+
+  .entry-date-control label {
+    font-size: 0.76rem;
+  }
+
+  .entry-date-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .entry-date-row input {
+    min-height: 38px;
+    border-radius: 7px;
+    padding: 0 8px;
+    font-size: 0.88rem;
+  }
+
+  .entry-date-shortcuts {
+    display: flex;
+    gap: 5px;
+  }
+
+  .entry-date-shortcuts button {
+    width: auto;
+    min-height: 34px;
+    padding: 0 9px;
+    font-size: 0.76rem;
   }
 
   .recording-controls,
-  .entry-date-row,
   .section-header {
     grid-template-columns: 1fr;
     flex-direction: column;
@@ -1710,12 +1775,12 @@ button:disabled {
 
   #record-button {
     max-width: none;
-    min-height: 72px;
-    height: 96px;
-    max-height: 120px;
-    border-radius: 14px;
-    padding: 14px;
-    font-size: 1.22rem;
+    min-height: 42px;
+    height: auto;
+    max-height: none;
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 0.95rem;
     flex-grow: 0;
   }
 
@@ -1723,14 +1788,9 @@ button:disabled {
     align-self: center;
     width: auto;
     min-width: 0;
-    min-height: 42px;
-    padding: 0 14px;
-    font-size: 0.92rem;
-  }
-
-  .entry-date-shortcuts {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 0.84rem;
   }
 
   button {
@@ -1738,8 +1798,32 @@ button:disabled {
     width: 100%;
   }
 
-  .auth-bar button {
-    width: auto;
+  .entry-quality-tip {
+    margin-top: 5px;
+    font-size: 0.74rem;
+    line-height: 1.28;
+  }
+
+  .entries {
+    gap: 12px;
+  }
+
+  .month-group,
+  .day-entries {
+    gap: 10px;
+  }
+
+  .month-entries {
+    gap: 20px;
+  }
+
+  .day-heading {
+    padding-bottom: 7px;
+    font-size: 1.05rem;
+  }
+
+  .entry {
+    padding: 14px 14px 16px;
   }
 
   .help-modal {
@@ -1786,32 +1870,34 @@ button:disabled {
   }
 
   .app-header {
+    align-items: center;
+    gap: 8px;
     width: 100%;
     max-width: 100%;
   }
 
   .header-left {
-    gap: 10px;
-    max-width: calc(100% - 44px);
+    gap: 8px;
+    max-width: none;
   }
 
   .help-button {
-    width: 36px;
-    height: 36px;
-    min-height: 36px;
-    font-size: 1rem;
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    font-size: 0.86rem;
   }
 
   .app-logo {
-    width: 40px;
-    height: 40px;
+    width: 30px;
+    height: 30px;
     flex: 0 0 auto;
   }
 
   .recording-controls {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 7px;
     width: 100%;
   }
 
@@ -1820,12 +1906,12 @@ button:disabled {
     align-self: stretch;
     width: 100%;
     min-width: 0;
-    height: 80px;
-    min-height: 80px;
-    max-height: 88px;
-    border-radius: 16px;
-    padding: 12px;
-    font-size: 1rem;
+    height: auto;
+    min-height: 40px;
+    max-height: none;
+    border-radius: 8px;
+    padding: 0 8px;
+    font-size: 0.84rem;
   }
 
   #record-button {
@@ -1841,11 +1927,12 @@ button:disabled {
   }
 
   .app-title {
-    max-width: 60vw;
-    overflow: hidden;
-    font-size: 24px;
+    max-width: none;
+    overflow: visible;
+    font-size: clamp(1.08rem, 5.7vw, 1.55rem);
     line-height: 1.1;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
   }
 }
