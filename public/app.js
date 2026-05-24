@@ -5,12 +5,13 @@ import {
   getAllEntriesIncludingDeleted,
   getLocalEntries,
   bulkImportEntries,
+  getLastLocalDbStep,
   updateLocalEntry,
   softDeleteLocalEntry,
   restoreLocalEntry,
   permanentlyDeleteLocalEntry,
   permanentlyDeleteLocalTrashEntries,
-} from "./localDb.js";
+} from "./localDb.js?v=2026-05-24-brave-indexeddb-fix-v3";
 const statusText = document.querySelector("#status");
 const greetingEl = document.querySelector("#personal-greeting");
 const streakSummaryEl = document.querySelector("#streak-summary");
@@ -58,6 +59,7 @@ const backupFileInput = document.querySelector("#backup-file-input");
 const backupFeedback = document.querySelector("#backup-feedback");
 const manualEntryButton = document.createElement("button");
 const localMergePrompt = document.createElement("section");
+const appVersionBadge = document.createElement("small");
 
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -100,7 +102,8 @@ const BACKUP_APP_ID = "gratitude_journal";
 const BACKUP_VERSION = 1;
 const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
 const CONTROL_DEBUG_KEY = "gratitude_debug_controls";
-const BACKUP_IMPORT_TIMEOUT_MS = 15_000;
+const APP_DEBUG_VERSION = "2026-05-24-brave-indexeddb-fix-v3";
+const BACKUP_IMPORT_TIMEOUT_MS = 30_000;
 
 let lastBackupImportStep = "";
 
@@ -143,6 +146,18 @@ manualEntryButton.type = "button";
 manualEntryButton.textContent = "\u270d\ufe0f Selbst schreiben";
 recordButton.textContent = "\ud83c\udfa4 Eintrag sprechen";
 recordingControls?.append(manualEntryButton);
+
+console.log(`[app-version] ${APP_DEBUG_VERSION}`);
+appVersionBadge.id = "app-debug-version";
+appVersionBadge.textContent = APP_DEBUG_VERSION;
+appVersionBadge.style.display = "block";
+appVersionBadge.style.margin = "1rem auto";
+appVersionBadge.style.maxWidth = "min(100%, 920px)";
+appVersionBadge.style.padding = "0 1rem";
+appVersionBadge.style.color = "#7a746b";
+appVersionBadge.style.fontSize = "0.75rem";
+appVersionBadge.style.textAlign = "center";
+document.body.append(appVersionBadge);
 
 localMergePrompt.id = "local-merge-prompt";
 localMergePrompt.className = "local-merge-prompt";
@@ -1675,17 +1690,24 @@ function renderBackupImportProgress() {
   });
 }
 
-function renderBackupImportSuccess({ foundCount, validCount, importedCount, duplicateCount, invalidCount, type = "success" }) {
+function renderBackupImportSuccess({ foundCount, validCount, importedCount, duplicateCount, invalidCount, type = "success", usedDirectLocalUpsertFallback = false }) {
+  const items = [
+    `${foundCount} Eintr\u00e4ge gefunden`,
+    `${validCount} g\u00fcltige Eintr\u00e4ge`,
+    `${importedCount} neue Eintr\u00e4ge importiert`,
+    `${duplicateCount} Duplikate \u00fcbersprungen`,
+    `${invalidCount} ung\u00fcltige Eintr\u00e4ge`,
+  ];
+
+  if (usedDirectLocalUpsertFallback) {
+    items.push("Lokaler Direct-Upsert-Fallback verwendet");
+    items.push("Ansicht wurde nicht automatisch aktualisiert, weil das lokale Lesen h\u00e4ngt");
+  }
+
   renderBackupFeedback({
     type,
     title: type === "warning" ? "Import teilweise abgeschlossen" : "Import abgeschlossen",
-    items: [
-      `${foundCount} Eintr\u00e4ge gefunden`,
-      `${validCount} g\u00fcltige Eintr\u00e4ge`,
-      `${importedCount} neue Eintr\u00e4ge importiert`,
-      `${duplicateCount} Duplikate \u00fcbersprungen`,
-      `${invalidCount} ung\u00fcltige Eintr\u00e4ge`,
-    ],
+    items,
   });
 }
 
@@ -1715,9 +1737,13 @@ function createImportTimeoutError() {
 }
 
 function createStepTimeoutError(step, details = `Timeout nach ${BACKUP_IMPORT_TIMEOUT_MS} ms`) {
-  const error = new Error(`Import konnte nicht abgeschlossen werden. Schritt: ${step}.`);
-  error.step = step;
-  error.details = details;
+  const localDbStep = step.startsWith("Bestehende lokale") ? getLastLocalDbStep?.() : "";
+  const finalStep = localDbStep || step;
+  const error = new Error(`Import konnte nicht abgeschlossen werden. Schritt: ${finalStep}.`);
+  error.step = finalStep;
+  error.details = localDbStep
+    ? `${details}. Letzter IndexedDB-Schritt: ${localDbStep}`
+    : details;
   return error;
 }
 
@@ -1729,9 +1755,10 @@ function annotateImportError(error, step, fallbackDetails = "") {
 }
 
 function getImportErrorInfo(error) {
+  const localDbStep = getLastLocalDbStep?.();
   return {
     message: error?.message || "Import technisch fehlgeschlagen. Backup konnte nicht importiert werden.",
-    step: error?.step || lastBackupImportStep || "unbekannt",
+    step: error?.step || localDbStep || lastBackupImportStep || "unbekannt",
     details: error?.details || error?.message || "Keine technischen Details vorhanden.",
   };
 }
@@ -1826,11 +1853,37 @@ async function runBackupImport(file) {
   });
 
   const foundCount = payload.entries.length;
-  const existingEntries = await runImportStep(6, "Bestehende Eintr\u00e4ge lesen", () => getAllEntriesForBackup());
+  let usedDirectLocalUpsertFallback = false;
+  let existingEntries = [];
+
+  if (isLocalModeActive()) {
+    try {
+      existingEntries = await runImportStep(6, "Bestehende lokale Eintr\u00e4ge lesen", () => getAllEntriesForBackup(), BACKUP_IMPORT_TIMEOUT_MS);
+    } catch (error) {
+      usedDirectLocalUpsertFallback = true;
+      console.warn("[backup-import] existing local entries could not be read; using direct upsert fallback", {
+        step: error.step || getLastLocalDbStep() || "Bestehende Eintr\u00e4ge lesen",
+        details: error.details || error.message,
+      });
+      renderBackupFeedback({
+        type: "warning",
+        title: "Lokaler Fallback aktiv",
+        message: "Bestehende lokale Eintr\u00e4ge konnten nicht gelesen werden. Das Backup wird direkt gespeichert.",
+        items: [
+          `Schritt: ${error.step || getLastLocalDbStep() || "Bestehende Eintr\u00e4ge lesen"}`,
+          `Details: ${error.details || error.message}`,
+        ],
+      });
+    }
+  } else {
+    existingEntries = await runImportStep(6, "Bestehende Cloud-Eintr\u00e4ge lesen", () => getAllEntriesForBackup());
+  }
+
   const mergeResult = await runImportStep(7, "Eintr\u00e4ge vorbereiten", () => {
     const result = mergeEntries(payload.entries, existingEntries, { preserveId: isLocalModeActive() });
     console.log("[backup-import] entries prepared", {
       foundCount,
+      directLocalUpsertFallback: usedDirectLocalUpsertFallback,
       validCount: result.validCount,
       importedCount: result.importedCount,
       duplicateCount: result.duplicateCount,
@@ -1849,11 +1902,15 @@ async function runBackupImport(file) {
   }, isLocalModeActive() ? BACKUP_IMPORT_TIMEOUT_MS + 1_000 : BACKUP_IMPORT_TIMEOUT_MS);
   console.log("[backup-import] step 8: import writes completed");
 
-  await runImportStep(9, "Ansicht aktualisieren", async () => {
-    console.log("[backup-import] step 9: refresh started");
-    await refreshJournalViews();
-    console.log("[backup-import] step 9: refresh completed");
-  });
+  if (usedDirectLocalUpsertFallback) {
+    console.warn("[backup-import] refresh skipped after direct local upsert fallback because reading local entries already timed out");
+  } else {
+    await runImportStep(9, "Ansicht aktualisieren", async () => {
+      console.log("[backup-import] step 9: refresh started");
+      await refreshJournalViews();
+      console.log("[backup-import] step 9: refresh completed");
+    });
+  }
   console.log("[backup-import] import completed");
 
   return {
@@ -1862,6 +1919,7 @@ async function runBackupImport(file) {
     importedCount: mergeResult.importedCount,
     duplicateCount: mergeResult.duplicateCount,
     invalidCount: mergeResult.invalidCount,
+    usedDirectLocalUpsertFallback,
   };
 }
 
@@ -2158,7 +2216,7 @@ async function importBackupFile(file) {
     await runImportStep(10, "UI aktualisieren", () => {
       renderBackupImportSuccess({
         ...result,
-        type: result.invalidCount > 0 ? "warning" : "success",
+        type: result.invalidCount > 0 || result.usedDirectLocalUpsertFallback ? "warning" : "success",
       });
     });
     showToast("Import abgeschlossen.", "success");

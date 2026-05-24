@@ -1,12 +1,32 @@
 const DB_NAME = "gratitude_journal";
 const DB_VERSION = 1;
 const ENTRIES_STORE = "entries";
-const DB_OPERATION_TIMEOUT_MS = 15_000;
+const DB_OPERATION_TIMEOUT_MS = 8_000;
 const BULK_IMPORT_TIMEOUT_MS = 15_000;
+
+let lastLocalDbStep = "";
+
+function setLocalDbStep(step) {
+  lastLocalDbStep = step;
+  console.log("[local-db]", step);
+}
+
+export function getLastLocalDbStep() {
+  return lastLocalDbStep;
+}
 
 function createDbError(message, cause) {
   const error = new Error(cause?.message ? `${message}: ${cause.message}` : message);
   error.cause = cause;
+  error.step = lastLocalDbStep || "IndexedDB";
+  error.details = error.message;
+  return error;
+}
+
+function createDbTimeoutError(message) {
+  const error = new Error(`${message}. Letzter IndexedDB-Schritt: ${lastLocalDbStep || "unbekannt"}`);
+  error.step = lastLocalDbStep || "IndexedDB";
+  error.details = `Timeout nach ${DB_OPERATION_TIMEOUT_MS} ms. Letzter IndexedDB-Schritt: ${lastLocalDbStep || "unbekannt"}`;
   return error;
 }
 
@@ -19,7 +39,7 @@ function closeLocalDb(db) {
 }
 
 function openLocalDb() {
-  console.log("[local-db] opening db");
+  setLocalDbStep("IndexedDB öffnen");
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -30,7 +50,7 @@ function openLocalDb() {
       }
 
       settled = true;
-      reject(new Error(`IndexedDB open timed out after ${DB_OPERATION_TIMEOUT_MS} ms.`));
+      reject(createDbTimeoutError("IndexedDB open timed out"));
     }, DB_OPERATION_TIMEOUT_MS);
 
     const finish = (callback) => {
@@ -55,13 +75,14 @@ function openLocalDb() {
     });
 
     request.addEventListener("success", () => {
-      console.log("[local-db] db opened");
+      setLocalDbStep("IndexedDB geöffnet");
       finish(() => resolve(request.result));
     });
     request.addEventListener("error", () => {
       finish(() => reject(createDbError("IndexedDB open failed", request.error)));
     });
     request.addEventListener("blocked", () => {
+      setLocalDbStep("IndexedDB öffnen blockiert");
       console.warn("[local-db] db open blocked");
     });
   });
@@ -88,7 +109,7 @@ async function runEntryStore(mode, callback, label = "operation") {
         } catch {
           // Transaction may already be inactive.
         }
-        reject(new Error(`IndexedDB ${label} timed out after ${DB_OPERATION_TIMEOUT_MS} ms.`));
+        reject(createDbTimeoutError(`IndexedDB ${label} timed out`));
       }, DB_OPERATION_TIMEOUT_MS);
 
       const finish = (callbackFn) => {
@@ -102,10 +123,13 @@ async function runEntryStore(mode, callback, label = "operation") {
       };
 
       try {
+        setLocalDbStep(`${mode === "readonly" ? "Readonly" : "Readwrite"} Transaction starten`);
         console.log(`[local-db] starting ${mode} transaction`, { label });
         transaction = db.transaction(ENTRIES_STORE, mode);
+        setLocalDbStep(`${mode === "readonly" ? "Readonly" : "Readwrite"} Transaction gestartet`);
         console.log("[local-db] transaction started", { label });
         store = transaction.objectStore(ENTRIES_STORE);
+        setLocalDbStep("ObjectStore holen");
         console.log("[local-db] object store ready", { label });
       } catch (error) {
         finish(() => reject(createDbError(`IndexedDB ${label} transaction setup failed`, error)));
@@ -180,7 +204,7 @@ async function readAllLocalRowsWithCursor() {
         } catch {
           // Transaction may already be inactive.
         }
-        reject(new Error(`IndexedDB cursor iteration timed out after ${DB_OPERATION_TIMEOUT_MS} ms (${rows.length} entries loaded).`));
+        reject(createDbTimeoutError(`IndexedDB cursor iteration timed out (${rows.length} entries loaded)`));
       }, DB_OPERATION_TIMEOUT_MS);
 
       const finish = (callback) => {
@@ -194,10 +218,13 @@ async function readAllLocalRowsWithCursor() {
       };
 
       try {
+        setLocalDbStep("Readonly Transaction starten");
         console.log("[local-db] starting readonly transaction");
         transaction = db.transaction(ENTRIES_STORE, "readonly");
+        setLocalDbStep("Readonly Transaction gestartet");
         console.log("[local-db] transaction started");
         store = transaction.objectStore(ENTRIES_STORE);
+        setLocalDbStep("ObjectStore holen");
         console.log("[local-db] object store ready");
       } catch (error) {
         finish(() => reject(createDbError("IndexedDB readonly transaction setup failed", error)));
@@ -219,6 +246,7 @@ async function readAllLocalRowsWithCursor() {
 
       try {
         console.log("[local-db] requesting getAll skipped; using cursor fallback");
+        setLocalDbStep("Cursor starten");
         console.log("[local-db] requesting cursor");
         request = store.openCursor();
       } catch (error) {
@@ -235,10 +263,12 @@ async function readAllLocalRowsWithCursor() {
         const cursor = event.target.result;
 
         if (!cursor) {
+          setLocalDbStep("Cursor abgeschlossen");
           console.log("[local-db] cursor completed");
           return;
         }
 
+        setLocalDbStep("Cursor lesen");
         rows.push(cursor.value);
         cursor.continue();
       });
@@ -458,6 +488,7 @@ export async function bulkImportEntries(entries) {
           id: row.id,
           entry_date: row.entry_date,
         });
+        setLocalDbStep(`IndexedDB schreiben Index ${index}`);
 
         let request = null;
         try {
@@ -474,6 +505,7 @@ export async function bulkImportEntries(entries) {
 
         request.addEventListener("success", () => {
           completedWrites += 1;
+          setLocalDbStep(`IndexedDB geschrieben Index ${index}`);
           console.log("[backup-import] IndexedDB write completed", {
             index,
             id: row.id,
