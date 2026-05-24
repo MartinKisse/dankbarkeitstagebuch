@@ -76,6 +76,7 @@ let recordedAudioUrl = null;
 let recordedAudioFile = null;
 let currentDraft = null;
 let savedDraftFingerprint = "";
+let isEntryActionProcessing = false;
 let currentSession = null;
 let currentUser = null;
 let activeTab = "entries";
@@ -98,6 +99,7 @@ const LOCAL_MODE_VALUE = "local";
 const BACKUP_APP_ID = "gratitude_journal";
 const BACKUP_VERSION = 1;
 const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
+const CONTROL_DEBUG_KEY = "gratitude_debug_controls";
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -581,6 +583,24 @@ function switchView(viewName) {
       setStatus(error.message || "Papierkorb konnte nicht geladen werden.", "error");
     });
   }
+}
+
+function scrollElementIntoStableView(element, behavior = "auto") {
+  if (!element) {
+    window.scrollTo({ top: 0, behavior });
+    return;
+  }
+
+  const targetTop = Math.max(0, window.scrollY + element.getBoundingClientRect().top - 12);
+  window.scrollTo({ top: targetTop, behavior });
+}
+
+function scrollCalendarAfterSave() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      scrollElementIntoStableView(calendarView);
+    });
+  });
 }
 
 function getDayKey(date) {
@@ -2418,12 +2438,28 @@ async function emptyTrash() {
 }
 
 function setProcessing(isProcessing) {
-  manualEntryButton.disabled = isProcessing;
-  recordButton.disabled = isProcessing;
-  discardRecordingButton.disabled = isProcessing || !recordedAudioFile;
-  transcribeRecordingButton.disabled = isProcessing || !recordedAudioFile;
-  discardDraftButton.disabled = isProcessing || !currentDraft;
-  saveDraftButton.disabled = isProcessing || !currentDraft;
+  isEntryActionProcessing = Boolean(isProcessing);
+  const hasRecordedAudio = Boolean(recordedAudioFile);
+  const hasDraft = Boolean(currentDraft);
+
+  manualEntryButton.disabled = isEntryActionProcessing;
+  recordButton.disabled = isEntryActionProcessing;
+  discardRecordingButton.disabled = isEntryActionProcessing || !hasRecordedAudio;
+  transcribeRecordingButton.disabled = isEntryActionProcessing || !hasRecordedAudio;
+  discardDraftButton.disabled = isEntryActionProcessing || !hasDraft;
+  saveDraftButton.disabled = isEntryActionProcessing || !hasDraft;
+
+  if (localStorage.getItem(CONTROL_DEBUG_KEY) === "true") {
+    console.debug("entry controls", {
+      disabledReason: isEntryActionProcessing ? "processing" : "",
+      selectedEntryDate: entryDateInput.value,
+      hasRecordedAudio,
+      hasDraft,
+      isRecording,
+      manualEntryDisabled: manualEntryButton.disabled,
+      recordDisabled: recordButton.disabled,
+    });
+  }
 }
 
 function clearDraftEditor() {
@@ -2484,7 +2520,7 @@ function confirmDiscardDraft() {
   return confirm("Es gibt einen ungespeicherten Entwurf. Möchtest du ihn verwerfen?");
 }
 
-function startManualEntry() {
+function startManualEntry({ focusEditor = true } = {}) {
   if (!hasJournalAccess()) {
     setStatus("Bitte melde dich zuerst an.", "error");
     return false;
@@ -2496,7 +2532,9 @@ function startManualEntry() {
 
   clearRecordingPreview();
   showDraftEditor({ originalText: "", bullets: [] });
-  draftBullets.focus();
+  if (focusEditor) {
+    draftBullets.focus({ preventScroll: true });
+  }
   setStatus("Schreibe deine Stichpunkte und speichere den Eintrag.", "success");
   return true;
 }
@@ -2534,7 +2572,7 @@ function startCalendarManualEntry(dayKey) {
     return;
   }
 
-  if (!startManualEntry()) {
+  if (!startManualEntry({ focusEditor: false })) {
     returnToCalendarDayAfterSave = null;
   }
 }
@@ -3184,15 +3222,20 @@ saveDraftButton.addEventListener("click", async () => {
     setStatus("Eintrag gespeichert.", "success");
 
     if (calendarReturnDay) {
+      if (draftEditor.contains(document.activeElement)) {
+        document.activeElement.blur();
+      }
+
       selectedCalendarDay = calendarReturnDay;
       calendarMonth = getMonthStart(getLocalDateFromDayKey(calendarReturnDay));
       setNewEntryDate(calendarReturnDay);
       await refreshJournalViews();
       switchView("calendar");
+      scrollCalendarAfterSave();
       return;
     }
 
-    setEntryDateFromOffset(0);
+    setNewEntryDate(entryDate);
     await refreshJournalViews();
   } catch (error) {
     console.error("SAVE ERROR:", error);
