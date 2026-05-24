@@ -102,11 +102,16 @@ const BACKUP_APP_ID = "gratitude_journal";
 const BACKUP_VERSION = 1;
 const LOCAL_MERGE_DONE_KEY_PREFIX = "gratitude_local_merge_done";
 const CONTROL_DEBUG_KEY = "gratitude_debug_controls";
+const MONTH_ARCHIVE_STATE_KEY = "gratitude_month_archive_state";
+const MONTH_ARCHIVE_DEBUG_KEY = "gratitude_debug_months";
 const APP_DEBUG_VERSION = "2026-05-25-cloud-upsert-fallback-v4";
 const BACKUP_IMPORT_TIMEOUT_MS = 30_000;
 
 let lastBackupImportStep = "";
 let pendingCloudSyncEntries = [];
+let expandedEntryMonths = new Set();
+let hasLoadedEntryMonthState = false;
+let lastRenderedEntries = [];
 
 const SPEAKING_THRESHOLD = 0.035;
 const VOLUME_SMOOTHING_FACTOR = 0.9;
@@ -684,6 +689,114 @@ function getMonthKey(date) {
   return getDayKey(getMonthStart(date));
 }
 
+function getEntryMonthKey(entry) {
+  const dayKey = getEntryDayKey(entry);
+  return dayKey ? `${dayKey.slice(0, 7)}-01` : "";
+}
+
+function formatMonthLabel(monthKey) {
+  return calendarMonthFormatter.format(getLocalDateFromDayKey(monthKey));
+}
+
+function isMonthArchiveDebugEnabled() {
+  return localStorage.getItem(MONTH_ARCHIVE_DEBUG_KEY) === "true";
+}
+
+function debugMonthArchive(message, details = {}) {
+  if (isMonthArchiveDebugEnabled()) {
+    console.debug(`[month-archive] ${message}`, details);
+  }
+}
+
+function getDefaultOpenMonthKey(monthGroups) {
+  const currentMonthKey = getMonthKey(new Date());
+  return monthGroups.some(([monthKey]) => monthKey === currentMonthKey) ? currentMonthKey : monthGroups[0]?.[0] || "";
+}
+
+function readStoredExpandedEntryMonths() {
+  const rawState = localStorage.getItem(MONTH_ARCHIVE_STATE_KEY);
+  if (!rawState) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawState);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((monthKey) => typeof monthKey === "string"));
+    }
+
+    if (parsed && typeof parsed === "object") {
+      return new Set(Object.entries(parsed)
+        .filter(([, isOpen]) => Boolean(isOpen))
+        .map(([monthKey]) => monthKey));
+    }
+  } catch (error) {
+    console.warn("[month-archive] state could not be read", error);
+  }
+
+  return null;
+}
+
+function saveExpandedEntryMonthsToStorage() {
+  try {
+    localStorage.setItem(MONTH_ARCHIVE_STATE_KEY, JSON.stringify([...expandedEntryMonths]));
+  } catch (error) {
+    console.warn("[month-archive] state could not be saved", error);
+  }
+}
+
+function loadExpandedEntryMonthsFromStorage(monthGroups) {
+  if (hasLoadedEntryMonthState) {
+    return;
+  }
+
+  const storedState = readStoredExpandedEntryMonths();
+  if (storedState) {
+    expandedEntryMonths = storedState;
+  } else {
+    const defaultOpenMonthKey = getDefaultOpenMonthKey(monthGroups);
+    expandedEntryMonths = defaultOpenMonthKey ? new Set([defaultOpenMonthKey]) : new Set();
+  }
+
+  hasLoadedEntryMonthState = true;
+  debugMonthArchive("loaded state", {
+    renderedMonthKeys: monthGroups.map(([monthKey]) => monthKey),
+    expandedEntryMonths: [...expandedEntryMonths],
+  });
+}
+
+function toggleEntryMonth(monthKey) {
+  debugMonthArchive("clicked month", { monthKey, before: [...expandedEntryMonths] });
+
+  if (expandedEntryMonths.has(monthKey)) {
+    expandedEntryMonths.delete(monthKey);
+  } else {
+    expandedEntryMonths.add(monthKey);
+  }
+
+  saveExpandedEntryMonthsToStorage();
+  debugMonthArchive("saved state after click", { monthKey, after: [...expandedEntryMonths] });
+  renderEntries();
+}
+
+function groupEntriesByMonth(entries) {
+  const groups = new Map();
+
+  for (const entry of entries) {
+    const monthKey = getEntryMonthKey(entry);
+    if (!monthKey) {
+      continue;
+    }
+
+    if (!groups.has(monthKey)) {
+      groups.set(monthKey, []);
+    }
+    groups.get(monthKey).push(entry);
+  }
+
+  return [...groups.entries()].sort(([monthKeyA], [monthKeyB]) => monthKeyB.localeCompare(monthKeyA));
+}
+
 function isSameMonth(date, otherDate) {
   return date.getFullYear() === otherDate.getFullYear() && date.getMonth() === otherDate.getMonth();
 }
@@ -1038,36 +1151,108 @@ function createEntryElement(entry) {
   return article;
 }
 
-function renderEntries(entries) {
+function renderEntries(entries = lastRenderedEntries) {
+  lastRenderedEntries = entries;
   entriesContainer.innerHTML = "";
 
-  const groupedEntries = groupEntriesByDay(entries);
+  const groupedMonths = groupEntriesByMonth(entries);
 
-  if (!groupedEntries.length) {
+  if (!groupedMonths.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "Noch keine Einträge vorhanden.";
+    empty.textContent = "Noch keine Eintr\u00e4ge vorhanden.";
     entriesContainer.append(empty);
     return;
   }
 
-  for (const [dayKey, dayEntries] of groupedEntries) {
-    const group = document.createElement("section");
-    group.className = "day-group";
+  loadExpandedEntryMonthsFromStorage(groupedMonths);
+  const defaultOpenMonthKey = getDefaultOpenMonthKey(groupedMonths);
+  const renderedMonthKeys = groupedMonths.map(([monthKey]) => monthKey);
+  const areAllMonthsOpen = groupedMonths.every(([monthKey]) => expandedEntryMonths.has(monthKey));
 
-    const heading = document.createElement("h3");
-    heading.className = "day-heading";
-    heading.textContent = formatDayHeading(dayKey);
+  debugMonthArchive("render", {
+    renderedMonthKeys,
+    expandedEntryMonths: [...expandedEntryMonths],
+  });
 
-    const stack = document.createElement("div");
-    stack.className = "day-entries";
+  const archiveActions = document.createElement("div");
+  archiveActions.className = "month-archive-actions";
 
-    for (const entry of dayEntries) {
-      stack.append(createEntryElement(entry));
+  const toggleAllButton = document.createElement("button");
+  toggleAllButton.className = "month-archive-toggle";
+  toggleAllButton.type = "button";
+  toggleAllButton.textContent = areAllMonthsOpen ? "Alle Monate einklappen" : "Alle Monate anzeigen";
+  toggleAllButton.addEventListener("click", () => {
+    if (areAllMonthsOpen) {
+      expandedEntryMonths = new Set();
+    } else {
+      expandedEntryMonths = new Set(renderedMonthKeys);
+    }
+    saveExpandedEntryMonthsToStorage();
+    debugMonthArchive("toggle all", {
+      action: areAllMonthsOpen ? "collapse all months" : "expand all months",
+      defaultOpenMonthKey,
+      expandedEntryMonths: [...expandedEntryMonths],
+    });
+    renderEntries();
+  });
+
+  archiveActions.append(toggleAllButton);
+  entriesContainer.append(archiveActions);
+
+  for (const [monthKey, monthEntries] of groupedMonths) {
+    const monthGroup = document.createElement("section");
+    monthGroup.className = "month-group";
+
+    const isOpen = expandedEntryMonths.has(monthKey);
+    debugMonthArchive("render month", { monthKey, isOpen });
+
+    const monthHeader = document.createElement("button");
+    monthHeader.className = "month-heading";
+    monthHeader.type = "button";
+    monthHeader.setAttribute("aria-expanded", String(isOpen));
+
+    const monthTitle = document.createElement("span");
+    monthTitle.textContent = formatMonthLabel(monthKey);
+
+    const monthMeta = document.createElement("span");
+    monthMeta.className = "month-heading-meta";
+    monthMeta.textContent = `${monthEntries.length} ${monthEntries.length === 1 ? "Eintrag" : "Eintr\u00e4ge"} ${isOpen ? "\u25be" : "\u25b8"}`;
+
+    monthHeader.append(monthTitle, monthMeta);
+    monthHeader.addEventListener("click", () => {
+      toggleEntryMonth(monthKey);
+    });
+
+    monthGroup.append(monthHeader);
+
+    if (isOpen) {
+      const monthBody = document.createElement("div");
+      monthBody.className = "month-entries";
+
+      for (const [dayKey, dayEntries] of groupEntriesByDay(monthEntries)) {
+        const group = document.createElement("section");
+        group.className = "day-group";
+
+        const heading = document.createElement("h3");
+        heading.className = "day-heading";
+        heading.textContent = formatDayHeading(dayKey);
+
+        const stack = document.createElement("div");
+        stack.className = "day-entries";
+
+        for (const entry of dayEntries) {
+          stack.append(createEntryElement(entry));
+        }
+
+        group.append(heading, stack);
+        monthBody.append(group);
+      }
+
+      monthGroup.append(monthBody);
     }
 
-    group.append(heading, stack);
-    entriesContainer.append(group);
+    entriesContainer.append(monthGroup);
   }
 }
 

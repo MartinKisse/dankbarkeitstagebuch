@@ -904,6 +904,68 @@ button:disabled {
 
 .entries {
   display: grid;
+  gap: 18px;
+}
+
+.month-archive-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 2px;
+}
+
+.month-archive-toggle {
+  min-height: 34px;
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: var(--accent-dark);
+  font-size: 0.92rem;
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  box-shadow: none;
+}
+
+.month-archive-toggle:hover {
+  background: transparent;
+  color: var(--accent);
+}
+
+.month-group {
+  display: grid;
+  gap: 16px;
+}
+
+.month-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 14px;
+  background: rgba(255, 250, 241, 0.64);
+  color: var(--text);
+  box-shadow: none;
+  font-size: 1rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.month-heading:hover {
+  background: var(--surface-strong);
+}
+
+.month-heading-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.month-entries {
+  display: grid;
   gap: 34px;
 }
 
@@ -1621,6 +1683,21 @@ button:disabled {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .month-archive-actions {
+    justify-content: flex-start;
+  }
+
+  .month-archive-toggle {
+    width: auto;
+  }
+
+  .month-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    padding: 8px 12px;
   }
 
   .trash-header-actions {
