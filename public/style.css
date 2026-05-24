@@ -1632,10 +1632,6 @@ button:disabled {
     order: -1;
   }
 
-  .calendar-shortcuts button {
-    width: auto;
-  }
-
   .calendar-new-entry-actions {
     align-items: stretch;
     padding: 12px;
@@ -1650,6 +1646,10 @@ button:disabled {
     width: auto;
     min-width: 0;
     padding: 0 14px;
+  }
+
+  .calendar-shortcuts button {
+    width: auto;
   }
 
   .calendar-weekdays,
@@ -1868,6 +1868,117 @@ button:disabled {
   .draft-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 767px) {
+  .calendar-panel {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 6px;
+    align-items: center;
+    padding: 10px;
+  }
+
+  .calendar-header,
+  .calendar-shortcuts {
+    display: contents;
+  }
+
+  .calendar-header h2 {
+    display: none;
+  }
+
+  .calendar-header button,
+  .calendar-shortcuts button {
+    width: auto;
+    min-width: 0;
+    min-height: 32px;
+    border-radius: 7px;
+    padding: 0 9px;
+    font-size: 0.76rem;
+    line-height: 1;
+  }
+
+  #calendar-prev,
+  #calendar-next {
+    display: inline-grid;
+    place-items: center;
+    width: 34px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  #calendar-prev::before {
+    content: "\2190";
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+
+  #calendar-next::before {
+    content: "\2192";
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+
+  #calendar-prev {
+    order: 1;
+  }
+
+  .calendar-month-label {
+    order: 2;
+    min-width: 0;
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.1;
+    text-align: center;
+  }
+
+  #calendar-today {
+    order: 3;
+  }
+
+  #calendar-next {
+    order: 4;
+  }
+
+  .calendar-weekdays {
+    order: 5;
+    grid-column: 1 / -1;
+    gap: 3px;
+    margin: 4px 0 2px;
+    font-size: 0.66rem;
+  }
+
+  .calendar-grid {
+    order: 6;
+    grid-column: 1 / -1;
+    gap: 3px;
+  }
+
+  .calendar-day-entries {
+    order: 7;
+    grid-column: 1 / -1;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .calendar-day,
+  .calendar-day.is-outside {
+    min-height: 36px;
+    border-radius: 6px;
+    padding: 3px 2px;
+  }
+
+  .calendar-day-number {
+    font-size: 0.78rem;
+  }
+
+  .calendar-entry-count {
+    min-width: 14px;
+    padding: 0 4px;
+    font-size: 0.6rem;
+    line-height: 1.35;
   }
 }
 
