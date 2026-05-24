@@ -522,6 +522,13 @@ h2 {
   line-height: 1.4;
 }
 
+@media (max-width: 767px) {
+  .greeting-salutation,
+  .greeting-break {
+    display: none;
+  }
+}
+
 .streak-summary {
   position: relative;
   display: inline-flex;

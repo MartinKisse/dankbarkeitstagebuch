@@ -439,9 +439,9 @@ function getFirstName(user) {
 function renderGreeting(user) {
   if (user) {
     const firstName = getFirstName(user);
-    greetingEl.innerHTML = `Hallo ${firstName}.<br>Wof\u00fcr bist du heute dankbar?`;
+    greetingEl.innerHTML = `<span class="greeting-salutation">Hallo ${firstName}.</span><br class="greeting-break">Wof\u00fcr bist du heute dankbar?`;
   } else {
-    greetingEl.innerHTML = "Hallo!<br>Wof\u00fcr bist du heute dankbar?";
+    greetingEl.innerHTML = `<span class="greeting-salutation">Hallo!</span><br class="greeting-break">Wof\u00fcr bist du heute dankbar?`;
   }
 }
 
